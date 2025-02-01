@@ -1,0 +1,22 @@
+[package]
+authors     = ["Colin Roberts"]
+description = "A Rust implementation of Customizable Constraint Systems (CCS)."
+edition     = "2021"
+keywords    = ["cryptography", "zk"]
+license     = "MIT"
+name        = "custom-constraints"
+readme      = "README.md"
+repository  = "https://github.com/autoparallel/custom-constraints"
+version     = "0.1.1"
+
+[dependencies]
+ark-ff = { version = "0.5", default-features = false, features = ["parallel"] }
+
+[dev-dependencies]
+rstest = { version = "0.24", default-features = false }
+
+
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+getrandom         = { version = "0.2", features = ["js"] }
+wasm-bindgen      = { version = "0.2" }
+wasm-bindgen-test = { version = "0.3" }

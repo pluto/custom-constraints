@@ -265,7 +265,7 @@ impl<F: Field> CircuitToCCSConverter<F> {
   }
 
   fn create_output_selector_matrix(&mut self, var: &Variable) -> (usize, SparseMatrix<F>) {
-    self.create_selector_matrix(&Expression::Variable(var.clone()))
+    self.create_selector_matrix(&Expression::Variable(*var))
   }
 }
 
@@ -275,6 +275,7 @@ mod tests {
   use crate::mock::F17;
 
   #[test]
+  #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
   fn test_circuit_to_ccs() {
     let mut builder = CircuitBuilder::new();
 
@@ -286,6 +287,34 @@ mod tests {
     let mul = x * y * z;
     builder.add_expression(mul.clone());
     let sub = mul - w;
+    builder.add_expression(sub);
+
+    // Convert to CCS
+    let ccs: CCS<F17> = builder.into();
+    println!("{ccs}");
+
+    // Test the CCS
+    let x_val = vec![F17::from(2)]; // public input
+    let w_val = vec![F17::from(3), F17::from(4), F17::from(24)]; // witnesses
+    assert!(ccs.is_satisfied(w_val, x_val.clone()));
+
+    // Test with invalid output
+    let w_invalid = vec![F17::from(3), F17::from(4), F17::from(25)];
+    assert!(!ccs.is_satisfied(w_invalid, x_val));
+  }
+
+  #[test]
+  fn test_other_circuit_to_ccs() {
+    let mut builder = CircuitBuilder::new();
+
+    // Create expression: x * y * z = w
+    let x = builder.x(0);
+    let y = builder.w(0);
+    let z = builder.w(1);
+    let w = builder.w(2);
+    let mul = x.clone() * y * z.clone() * z.clone() * z;
+    builder.add_expression(mul.clone());
+    let sub = mul - w * x;
     builder.add_expression(sub);
 
     // Convert to CCS

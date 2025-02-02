@@ -12,7 +12,7 @@ pub struct CircuitBuilder<F: Field> {
 }
 
 // Variable and Expression enums remain unchanged
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Variable {
   Public(usize),
   Witness(usize),

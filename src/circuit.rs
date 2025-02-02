@@ -1,91 +1,121 @@
-use std::{
-  fmt::{self, Display, Formatter},
-  ops::{Add, Mul},
-};
+use std::fmt::{self, Display, Formatter};
 
-use super::*;
+use ark_ff::Field;
 
-#[derive(Clone, Copy, Debug)]
+// Core expression type that represents our arithmetic circuit
+#[derive(Clone, Debug)]
+pub enum Expression<F: Field> {
+  // Terminal values
+  Input(Input),
+  Constant(F),
+  // Operations over multiple terms
+  Add(Vec<Expression<F>>),
+  Mul(Vec<Expression<F>>),
+}
+
+// Input variables in our circuit
+#[derive(Clone, Debug)]
 pub enum Input {
-  Variable(Variable),
+  // x_i - public inputs
   Public(usize),
-  Private(usize),
+  // w_j - private witness values
+  Witness(usize),
 }
 
-#[derive(Clone, Copy, Debug)]
-pub struct Variable {
-  pub label: usize,
+// Implementation for operator overloading
+impl<F: Field> std::ops::Add for Expression<F> {
+  type Output = Expression<F>;
+
+  fn add(self, rhs: Self) -> Self::Output {
+    match (self, rhs) {
+      // If either side is already an Add, extend it
+      (Expression::Add(mut v1), Expression::Add(v2)) => {
+        v1.extend(v2);
+        Expression::Add(v1)
+      },
+      (Expression::Add(mut v), rhs) => {
+        v.push(rhs);
+        Expression::Add(v)
+      },
+      (lhs, Expression::Add(mut v)) => {
+        v.insert(0, lhs);
+        Expression::Add(v)
+      },
+      // Otherwise create new Add expression
+      (lhs, rhs) => Expression::Add(vec![lhs, rhs]),
+    }
+  }
 }
 
-#[derive(Clone, Copy, Debug)]
-pub enum Expression<ExpL, ExpR> {
-  Add(ExpL, ExpR),
-  Mul(ExpL, ExpR),
+impl<F: Field> std::ops::Mul for Expression<F> {
+  type Output = Expression<F>;
+
+  fn mul(self, rhs: Self) -> Self::Output {
+    match (self, rhs) {
+      // If either side is already a Mul, extend it
+      (Expression::Mul(mut v1), Expression::Mul(v2)) => {
+        v1.extend(v2);
+        Expression::Mul(v1)
+      },
+      (Expression::Mul(mut v), rhs) => {
+        v.push(rhs);
+        Expression::Mul(v)
+      },
+      (lhs, Expression::Mul(mut v)) => {
+        v.insert(0, lhs);
+        Expression::Mul(v)
+      },
+      // Otherwise create new Mul expression
+      (lhs, rhs) => Expression::Mul(vec![lhs, rhs]),
+    }
+  }
 }
 
-impl Add for Input {
-  type Output = Expression<Input, Input>;
-
-  fn add(self, rhs: Self) -> Self::Output { Expression::Add(self, rhs) }
+// Convenience conversion from Input to Expression
+impl<F: Field> From<Input> for Expression<F> {
+  fn from(input: Input) -> Self { Expression::Input(input) }
 }
 
-impl<ExpL, ExpR> Add<Expression<ExpL, ExpR>> for Input {
-  type Output = Expression<Input, Expression<ExpL, ExpR>>;
-
-  fn add(self, rhs: Expression<ExpL, ExpR>) -> Self::Output { Expression::Add(self, rhs) }
+// Convenience conversion from Field element to Expression
+impl<F: Field> From<F> for Expression<F> {
+  fn from(value: F) -> Self { Expression::Constant(value) }
 }
 
-impl<ExpL, ExpR> Add<Input> for Expression<ExpL, ExpR> {
-  type Output = Expression<Expression<ExpL, ExpR>, Input>;
-
-  fn add(self, rhs: Input) -> Self::Output { Expression::Add(self, rhs) }
-}
-
-impl<ExpL1, ExpR1, ExpL2, ExpR2> Add<Expression<ExpL2, ExpR2>> for Expression<ExpL1, ExpR1> {
-  type Output = Expression<Expression<ExpL1, ExpR1>, Expression<ExpL2, ExpR2>>;
-
-  fn add(self, rhs: Expression<ExpL2, ExpR2>) -> Self::Output { Expression::Add(self, rhs) }
-}
-
-impl Mul for Input {
-  type Output = Expression<Input, Input>;
-
-  fn mul(self, rhs: Self) -> Self::Output { Expression::Mul(self, rhs) }
-}
-
-impl<ExpL, ExpR> Mul<Expression<ExpL, ExpR>> for Input {
-  type Output = Expression<Input, Expression<ExpL, ExpR>>;
-
-  fn mul(self, rhs: Expression<ExpL, ExpR>) -> Self::Output { Expression::Mul(self, rhs) }
-}
-
-impl<ExpL, ExpR> Mul<Input> for Expression<ExpL, ExpR> {
-  type Output = Expression<Expression<ExpL, ExpR>, Input>;
-
-  fn mul(self, rhs: Input) -> Self::Output { Expression::Mul(self, rhs) }
-}
-
-impl<ExpL1, ExpR1, ExpL2, ExpR2> Mul<Expression<ExpL2, ExpR2>> for Expression<ExpL1, ExpR1> {
-  type Output = Expression<Expression<ExpL1, ExpR1>, Expression<ExpL2, ExpR2>>;
-
-  fn mul(self, rhs: Expression<ExpL2, ExpR2>) -> Self::Output { Expression::Mul(self, rhs) }
+// Display implementation for pretty-printing
+impl<F: Field + Display> Display for Expression<F> {
+  fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+    match self {
+      Expression::Input(input) => write!(f, "{}", input),
+      Expression::Constant(c) => write!(f, "{}", c),
+      Expression::Add(terms) => {
+        write!(f, "(")?;
+        for (i, term) in terms.iter().enumerate() {
+          if i > 0 {
+            write!(f, " + ")?;
+          }
+          write!(f, "{}", term)?;
+        }
+        write!(f, ")")
+      },
+      Expression::Mul(factors) => {
+        write!(f, "(")?;
+        for (i, factor) in factors.iter().enumerate() {
+          if i > 0 {
+            write!(f, " * ")?;
+          }
+          write!(f, "{}", factor)?;
+        }
+        write!(f, ")")
+      },
+    }
+  }
 }
 
 impl Display for Input {
   fn fmt(&self, f: &mut Formatter) -> fmt::Result {
     match self {
-      Input::Variable(val) => write!(f, "x_{}", val.label),
-      Input::Public(val) => write!(f, "{}", val),
-      Input::Private(val) => write!(f, "{}", val),
-    }
-  }
-}
-
-impl<ExpL: Display, ExpR: Display> Display for Expression<ExpL, ExpR> {
-  fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-    match self {
-      Expression::Add(left, right) => write!(f, "({} + {})", left, right),
-      Expression::Mul(left, right) => write!(f, "({} * {})", left, right),
+      Input::Public(i) => write!(f, "x_{}", i),
+      Input::Witness(j) => write!(f, "w_{}", j),
     }
   }
 }
@@ -93,37 +123,23 @@ impl<ExpL: Display, ExpR: Display> Display for Expression<ExpL, ExpR> {
 #[cfg(test)]
 mod tests {
   use super::*;
+  use crate::mock::F17;
 
   #[test]
-  fn writing_a_program() {
-    // Create two variables
-    let a = Input::Public(7);
-    let b = Input::Private(3);
-    let x = Input::Variable(Variable { label: 0 });
+  fn test_multivariate_expressions() {
+    // Create public inputs x_0, x_1
+    let x0 = Expression::from(Input::Public(0));
+    let x1 = Expression::from(Input::Public(1));
 
-    // Create basic expressions with these variables
-    let add_ab = a + b;
-    println!("{}", add_ab);
-    assert_eq!(format!("{}", add_ab), "(7 + 3)");
+    // Create witness values w_0, w_1
+    let w0 = Expression::from(Input::Witness(0));
+    let w1 = Expression::from(Input::Witness(1));
 
-    let mul_ab = a * b;
-    println!("{}", mul_ab);
-    assert_eq!(format!("{}", mul_ab), "(7 * 3)");
+    // Create a constant
+    let c = Expression::from(F17::from(5));
 
-    // Check that we can add a variable to an expression
-    println!("{}", a + mul_ab);
-    assert_eq!(format!("{}", a + mul_ab), "(7 + (7 * 3))");
-
-    // Check that we can add an expression to a variable
-    println!("{}", mul_ab + a);
-    assert_eq!(format!("{}", mul_ab + a), "((7 * 3) + 7)");
-
-    // Check that we can add two expressions together
-    println!("{}", add_ab + mul_ab);
-    assert_eq!(format!("{}", add_ab + mul_ab), "((7 + 3) + (7 * 3))");
-
-    // Check that we can multiply an expression by a variable
-    println!("{}", mul_ab * x);
-    assert_eq!(format!("{}", mul_ab * x), "((7 * 3) * x_0)");
+    // Test complex expression: 5 * x_0 * w_0 + x_1 * w_1
+    let expr = (c * x0 * w0) + (x1 * w1);
+    assert_eq!(expr.to_string(), "((5 * x_0 * w_0) + (x_1 * w_1))");
   }
 }

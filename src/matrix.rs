@@ -1,3 +1,5 @@
+use core::ops::Mul;
+
 use super::*;
 
 pub struct SparseMatrix<F> {
@@ -34,6 +36,70 @@ impl<F: Field> SparseMatrix<F> {
     }
 
     result
+  }
+}
+
+impl<F: Field> Mul<Vec<F>> for &SparseMatrix<F> {
+  type Output = Vec<F>;
+
+  fn mul(self, rhs: Vec<F>) -> Self::Output { self.mul_vector(&rhs) }
+}
+
+impl<F: Field> Mul<&SparseMatrix<F>> for &SparseMatrix<F> {
+  type Output = SparseMatrix<F>;
+
+  fn mul(self, rhs: &SparseMatrix<F>) -> Self::Output {
+    // We'll implement elementwise multiplication but first check dimensions match
+    assert_eq!(self.num_cols, rhs.num_cols, "Matrices must have same dimensions");
+
+    // For the Hadamard product, we'll only have non-zero elements where both matrices
+    // have non-zero elements at the same position
+    let mut result_values = Vec::new();
+    let mut result_col_indices = Vec::new();
+    let mut result_row_offsets = vec![0];
+
+    // Process each row
+    for row in 0..self.row_offsets.len() - 1 {
+      // Get the ranges for non-zero elements in this row for both matrices
+      let self_start = self.row_offsets[row];
+      let self_end = self.row_offsets[row + 1];
+      let rhs_start = rhs.row_offsets[row];
+      let rhs_end = rhs.row_offsets[row + 1];
+
+      // Create iterators over the non-zero elements in this row
+      let mut self_iter = (self_start..self_end).map(|i| (self.col_indices[i], self.values[i]));
+      let mut rhs_iter = (rhs_start..rhs_end).map(|i| (rhs.col_indices[i], rhs.values[i]));
+
+      // Keep track of our position in each iterator
+      let mut self_next = self_iter.next();
+      let mut rhs_next = rhs_iter.next();
+
+      // Merge the non-zero elements
+      while let (Some((self_col, self_val)), Some((rhs_col, rhs_val))) = (self_next, rhs_next) {
+        match self_col.cmp(&rhs_col) {
+          std::cmp::Ordering::Equal => {
+            // When columns match, multiply the values
+            result_values.push(self_val * rhs_val);
+            result_col_indices.push(self_col);
+            self_next = self_iter.next();
+            rhs_next = rhs_iter.next();
+          },
+          std::cmp::Ordering::Less => {
+            // Skip elements only in self
+            self_next = self_iter.next();
+          },
+          std::cmp::Ordering::Greater => {
+            // Skip elements only in rhs
+            rhs_next = rhs_iter.next();
+          },
+        }
+      }
+
+      // Record where this row ends
+      result_row_offsets.push(result_values.len());
+    }
+
+    SparseMatrix::new(result_row_offsets, result_col_indices, result_values, self.num_cols)
   }
 }
 
@@ -117,8 +183,107 @@ where [(); NUM_ROWS + 1]:
   }
 }
 
+impl<F: Field, const NUM_NONZERO: usize, const NUM_ROWS: usize, const NUM_COLUMNS: usize>
+  Mul<Vec<F>> for &TestSparseMatrix<F, NUM_NONZERO, NUM_ROWS, NUM_COLUMNS>
+where [(); NUM_ROWS + 1]:
+{
+  type Output = Vec<F>;
+
+  fn mul(self, rhs: Vec<F>) -> Self::Output {
+    assert_eq!(rhs.len(), NUM_COLUMNS, "Invalid vector length");
+    let mut result = vec![F::ZERO; NUM_ROWS];
+
+    for row in 0..NUM_ROWS {
+      let start = self.row_offsets[row];
+      let end = self.row_offsets[row + 1];
+
+      result[row] = self.values[start..end]
+        .iter()
+        .zip(&self.col_indices[start..end])
+        .map(|(v, &c)| *v * rhs[c])
+        .sum();
+    }
+
+    result
+  }
+}
+
+impl<
+    F: Field,
+    const NUM_NONZERO1: usize,
+    const NUM_NONZERO2: usize,
+    const NUM_ROWS: usize,
+    const NUM_COLUMNS: usize,
+  > Mul<&TestSparseMatrix<F, NUM_NONZERO2, NUM_ROWS, NUM_COLUMNS>>
+  for &TestSparseMatrix<F, NUM_NONZERO1, NUM_ROWS, NUM_COLUMNS>
+where
+  [(); NUM_ROWS + 1]:,
+  [(); min(NUM_NONZERO1, NUM_NONZERO2)]:,
+{
+  // Our output is another TestSparseMatrix with the same dimensions
+  // We need to compute the maximum possible number of non-zero elements
+  // in the result, which is min(NUM_NONZERO1, NUM_NONZERO2)
+  type Output = TestSparseMatrix<F, { min(NUM_NONZERO1, NUM_NONZERO2) }, NUM_ROWS, NUM_COLUMNS>;
+
+  fn mul(self, rhs: &TestSparseMatrix<F, NUM_NONZERO2, NUM_ROWS, NUM_COLUMNS>) -> Self::Output {
+    // Initialize our result arrays with maximum possible size
+    let mut values = [F::ZERO; min(NUM_NONZERO1, NUM_NONZERO2)];
+    let mut col_indices = [0; min(NUM_NONZERO1, NUM_NONZERO2)];
+    let mut row_offsets = [0; NUM_ROWS + 1];
+
+    // Keep track of where we are in the result arrays
+    let mut current_nonzero = 0;
+
+    for row in 0..NUM_ROWS {
+      let self_start = self.row_offsets[row];
+      let self_end = self.row_offsets[row + 1];
+      let rhs_start = rhs.row_offsets[row];
+      let rhs_end = rhs.row_offsets[row + 1];
+
+      let mut self_iter = (self_start..self_end).map(|i| (self.col_indices[i], self.values[i]));
+      let mut rhs_iter = (rhs_start..rhs_end).map(|i| (rhs.col_indices[i], rhs.values[i]));
+
+      let mut self_next = self_iter.next();
+      let mut rhs_next = rhs_iter.next();
+
+      while let (Some((self_col, self_val)), Some((rhs_col, rhs_val))) = (self_next, rhs_next) {
+        match self_col.cmp(&rhs_col) {
+          std::cmp::Ordering::Equal => {
+            values[current_nonzero] = self_val * rhs_val;
+            col_indices[current_nonzero] = self_col;
+            current_nonzero += 1;
+            self_next = self_iter.next();
+            rhs_next = rhs_iter.next();
+          },
+          std::cmp::Ordering::Less => {
+            self_next = self_iter.next();
+          },
+          std::cmp::Ordering::Greater => {
+            rhs_next = rhs_iter.next();
+          },
+        }
+      }
+
+      row_offsets[row + 1] = current_nonzero;
+    }
+
+    TestSparseMatrix { values, col_indices, row_offsets }
+  }
+}
+
+// Helper const function to compute minimum of two numbers at compile time
+pub const fn min(a: usize, b: usize) -> usize {
+  if a < b {
+    a
+  } else {
+    b
+  }
+}
+
 #[cfg(test)]
 mod tests {
+  use ark_ff::AdditiveGroup;
+
   use super::*;
 
   #[test]
@@ -202,5 +367,46 @@ mod tests {
     assert_eq!(matrix.col_indices, [1, 2]);
     // Row offsets will have 7 elements (6 rows + 1)
     assert_eq!(matrix.row_offsets, [0, 0, 0, 1, 1, 1, 2]);
+  }
+
+  #[test]
+  fn test_hadamard_multiplication() {
+    // Create two test matrices:
+    // Matrix 1:
+    // [2 0 1]
+    // [0 3 0]
+    // [4 0 5]
+    let test_matrix1: TestSparseMatrix<F17, 5, 3, 3> = TestSparseMatrix::<_, 0, 3, 3>::new()
+      .push_val::<0, 0>(F17::from(2))
+      .push_val::<0, 2>(F17::from(1))
+      .push_val::<1, 1>(F17::from(3))
+      .push_val::<2, 0>(F17::from(4))
+      .push_val::<2, 2>(F17::from(5));
+
+    // Matrix 2:
+    // [3 0 0]
+    // [0 2 1]
+    // [0 0 2]
+    let test_matrix2: TestSparseMatrix<F17, 4, 3, 3> = TestSparseMatrix::<_, 0, 3, 3>::new()
+      .push_val::<0, 0>(F17::from(3))
+      .push_val::<1, 1>(F17::from(2))
+      .push_val::<1, 2>(F17::from(1))
+      .push_val::<2, 2>(F17::from(2));
+
+    // Perform Hadamard multiplication
+    let result = &test_matrix1 * &test_matrix2;
+
+    // The result should be:
+    // [6 0 0]
+    // [0 6 0]
+    // [0 0 10]
+    assert_eq!(result.values, [
+      F17::from(6),  // 2*3 at (0,0)
+      F17::from(6),  // 3*2 at (1,1)
+      F17::from(10), // 5*2 at (2,2)
+      F17::ZERO,
+    ]);
+    assert_eq!(result.col_indices, [0, 1, 2, 0]);
+    assert_eq!(result.row_offsets, [0, 1, 2, 3]);
   }
 }

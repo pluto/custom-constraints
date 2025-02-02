@@ -5,10 +5,10 @@ use ark_ff::Field;
 // The CircuitBuilder struct remains unchanged from your implementation
 #[derive(Clone, Debug)]
 pub struct CircuitBuilder<F: Field> {
-  pub_inputs:  usize,
-  wit_inputs:  usize,
-  aux_count:   usize,
-  expressions: Vec<(Expression<F>, Variable)>,
+  pub pub_inputs:  usize,
+  pub wit_inputs:  usize,
+  pub aux_count:   usize,
+  pub expressions: Vec<(Expression<F>, Variable)>,
 }
 
 // Variable and Expression enums remain unchanged
@@ -137,6 +137,25 @@ impl<F: Field> std::ops::Mul for Expression<F> {
   }
 }
 
+impl<F: Field> std::ops::Neg for Expression<F> {
+  type Output = Expression<F>;
+
+  fn neg(self) -> Self::Output {
+    // Negation is multiplication by -1
+    Expression::Mul(vec![Expression::Constant(F::from(-1)), self])
+  }
+}
+
+// Implement subtraction
+impl<F: Field> std::ops::Sub for Expression<F> {
+  type Output = Expression<F>;
+
+  fn sub(self, rhs: Self) -> Self::Output {
+    // a - b is the same as a + (-b)
+    self + (-rhs)
+  }
+}
+
 // Existing Display implementations remain unchanged
 impl<F: Field + Display> Display for Expression<F> {
   fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
@@ -183,6 +202,47 @@ mod tests {
   use crate::mock::F17;
 
   #[test]
+  #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+  fn test_expression_arithmetic() {
+    let mut builder = CircuitBuilder::new();
+
+    // Create base values
+    let x0 = builder.x(0);
+    let x1 = builder.x(1);
+    let w0 = builder.w(0);
+    let three = CircuitBuilder::constant(F17::from(3));
+
+    // Test negation: -x0
+    let neg_x0 = -x0;
+    let y0 = builder.add_expression(neg_x0);
+
+    // Test subtraction: w0 - x1
+    let sub_expr = w0 - x1;
+    let y1 = builder.add_expression(sub_expr);
+
+    // Test complex expression: 3 * (w0 - x1) - (-x0)
+    let complex_expr = three * y1 - y0;
+    let y2 = builder.add_expression(complex_expr);
+
+    // Print original expressions
+    println!("\nOriginal expressions:");
+    for (expr, var) in builder.expressions() {
+      if let Variable::Aux(idx) = var {
+        println!("y_{} := {}", idx, expr);
+      }
+    }
+
+    // Print expanded expressions
+    println!("\nExpanded expressions:");
+    for (expr, var) in builder.expressions() {
+      if let Variable::Aux(idx) = var {
+        println!("y_{} := {}", idx, builder.expand(expr));
+      }
+    }
+  }
+
+  #[test]
+  #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
   fn test_expression_expansion() {
     let mut builder = CircuitBuilder::new();
 

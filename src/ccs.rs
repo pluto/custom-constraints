@@ -86,6 +86,7 @@ mod tests {
   use crate::mock::F17;
 
   #[test]
+  #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
   fn test_ccs_satisfaction() {
     println!("\nSetting up CCS for constraint x * y = z");
 
@@ -108,7 +109,7 @@ mod tests {
     println!("\nTesting valid case: x=2, y=3, z=6");
     let x = vec![F17::from(2)]; // public input x = 2
     let w = vec![F17::from(3), F17::from(6)]; // witness y = 3, z = 6
-    assert!(ccs.is_satisfied(w.clone(), x.clone()));
+    assert!(ccs.is_satisfied(w, x.clone()));
 
     println!("\nTesting invalid case: x=2, y=3, z=7");
     let w_invalid = vec![F17::from(3), F17::from(7)]; // witness y = 3, z = 7 (invalid)

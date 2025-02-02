@@ -2,7 +2,7 @@ use std::ops::Mul;
 
 use super::*;
 
-#[derive(Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct SparseMatrix<F> {
   row_offsets: Vec<usize>,
   col_indices: Vec<usize>,

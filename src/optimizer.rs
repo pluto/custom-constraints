@@ -290,6 +290,7 @@ mod tests {
 
     // Convert to CCS
     let ccs: CCS<F17> = builder.into();
+    println!("{ccs}");
 
     // Test the CCS
     let x_val = vec![F17::from(2)]; // public input

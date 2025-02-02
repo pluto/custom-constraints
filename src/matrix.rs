@@ -1,4 +1,7 @@
-use std::ops::Mul;
+use std::{
+  fmt::{self, Display, Formatter},
+  ops::Mul,
+};
 
 use super::*;
 
@@ -159,6 +162,46 @@ impl<F: Field> Mul<&SparseMatrix<F>> for &SparseMatrix<F> {
     }
 
     SparseMatrix::new(result_row_offsets, result_col_indices, result_values, self.num_cols)
+  }
+}
+
+impl<F: Field + Display> Display for SparseMatrix<F> {
+  fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+    // First, we'll find the maximum width needed for any number
+    // This helps us align columns nicely
+    let max_width = self.values.iter().map(|v| format!("{}", v).len()).max().unwrap_or(1).max(1); // At least 1 character for "0"
+
+    // For each row...
+    for row in 0..self.row_offsets.len() - 1 {
+      write!(f, "[")?;
+
+      // Find the non-zero elements in this row
+      let row_start = self.row_offsets[row];
+      let row_end = self.row_offsets[row + 1];
+      let mut current_col = 0;
+
+      // Process each column, inserting zeros where needed
+      for col in 0..self.num_cols {
+        // Add spacing between elements
+        if col > 0 {
+          write!(f, " ")?;
+        }
+
+        // Check if we have a non-zero element at this position
+        if current_col < row_end - row_start && self.col_indices[row_start + current_col] == col {
+          // We found a non-zero element
+          let val = &self.values[row_start + current_col];
+          write!(f, "{:>width$}", val, width = max_width)?;
+          current_col += 1;
+        } else {
+          // This position is zero
+          write!(f, "{:>width$}", 0, width = max_width)?;
+        }
+      }
+
+      writeln!(f, "]")?;
+    }
+    Ok(())
   }
 }
 

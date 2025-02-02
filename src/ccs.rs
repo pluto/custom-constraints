@@ -4,108 +4,78 @@ use super::*;
 
 #[derive(Debug, Default)]
 pub struct CCS<F: Field> {
-  /// `m` in the paper, number of rows
-  // rows:                usize,
-  /// `n` in the paper, total number of inputs + 1
-  // cols:                usize,
-  /// `N` in the paper
-  // nonzero_entries:     usize,
-  /// `t` in the paper
-  // number_of_matrices:  usize,
-  /// `q` in the paper
-  // number_of_multisets: usize,
-  // constants: Vec<F>,
-  // matrices:       Vec<SparseMatrix<F>>,
-  constraints: Vec<Constraint<F>>,
-  public_inputs:  usize,
-  private_inputs: usize,
-  aux_inputs:     usize,
+  pub constants: Vec<F>,
+  pub multisets: Vec<Vec<usize>>,
+  pub matrices:  Vec<SparseMatrix<F>>,
 }
 
-#[derive(Debug, Clone)]
-pub enum Constraint<F> {
-  Multiplication(Gate<F>),
-  Addition(Gate<F>),
-}
-
-#[derive(Debug, Clone)]
-pub struct Gate<F> {
-  inputs:    Vec<Variable>,
-  output:    Variable,
-  constants: Vec<F>,
-}
-
-#[derive(Debug, Clone, Copy)]
-pub enum Variable {
-  PublicInput(usize),
-  PrivateInput(usize),
-  Aux(usize),
-}
-
-impl<F: Field> CCS<F> {
+impl<F: Field + std::fmt::Debug> CCS<F> {
   pub fn new() -> Self { Self::default() }
 
-  pub fn alloc_public_input(&mut self) { self.public_inputs += 1 }
+  pub fn is_satisfied(&self, w: Vec<F>, x: Vec<F>) -> bool {
+    println!("\nBeginning CCS satisfaction check:");
 
-  pub fn alloc_private_input(&mut self) { self.private_inputs += 1 }
+    // Construct z = (w, 1, x)
+    let mut z = Vec::with_capacity(w.len() + 1 + x.len());
+    z.extend(w.iter().cloned());
+    z.push(F::ONE);
+    z.extend(x.iter().cloned());
 
-  pub fn alloc_aux_input(&mut self) { self.aux_inputs += 1; }
+    println!("Constructed z vector: {:?}", z);
 
-  pub fn alloc_constraint(&mut self, constraint: Constraint<F>) {
-    self.constraints.push(constraint);
-  }
+    // Compute all matrix-vector products
+    let products: Vec<Vec<F>> = self
+      .matrices
+      .iter()
+      .enumerate()
+      .map(|(i, matrix)| {
+        let result = matrix * &z;
+        println!("M{} · z = {:?}", i, result);
+        result
+      })
+      .collect();
 
-  // TODO: This should be done with matrix multiplication probably
-  pub fn is_satisfied(
-    &self,
-    public_inputs: Vec<F>,
-    private_inputs: Vec<F>,
-    aux_inputs: Vec<F>,
-  ) -> bool {
-    for constraint in &self.constraints {
-      match constraint {
-        Constraint::Addition(gate) => {
-          if gate
-            .inputs
-            .iter()
-            .zip(gate.constants.clone())
-            .map(|(var, c)| match var {
-              Variable::PublicInput(idx) => c * public_inputs[*idx],
-              Variable::PrivateInput(idx) => c * private_inputs[*idx],
-              Variable::Aux(idx) => c * aux_inputs[*idx],
-            })
-            .sum::<F>()
-            != match gate.output {
-              Variable::PublicInput(idx) => public_inputs[idx],
-              Variable::PrivateInput(idx) => private_inputs[idx],
-              Variable::Aux(idx) => aux_inputs[idx],
-            }
-          {
-            return false;
-          }
-        },
-        Constraint::Multiplication(gate) => {
-          if gate
-            .inputs
-            .iter()
-            .zip(gate.constants.clone())
-            .map(|(var, c)| match var {
-              Variable::PublicInput(idx) => c * public_inputs[*idx],
-              Variable::PrivateInput(idx) => c * private_inputs[*idx],
-              Variable::Aux(idx) => c * aux_inputs[*idx],
-            })
-            .product::<F>()
-            != match gate.output {
-              Variable::PublicInput(idx) => public_inputs[idx],
-              Variable::PrivateInput(idx) => private_inputs[idx],
-              Variable::Aux(idx) => aux_inputs[idx],
-            }
-          {
-            return false;
-          }
-        },
+    // For each row in the output...
+    let m = if let Some(first) = products.first() {
+      first.len()
+    } else {
+      return true; // No constraints
+    };
+
+    // For each output coordinate...
+    for row in 0..m {
+      println!("\nChecking row {}", row);
+      let mut sum = F::ZERO;
+
+      // For each constraint...
+      for (i, multiset) in self.multisets.iter().enumerate() {
+        println!("Processing constraint {} with multiset {:?}", i, multiset);
+
+        // Get the Hadamard product of all matrices in this multiset
+        let mut term = products[multiset[0]][row];
+        println!("Starting with result from M{}: {:?}", multiset[0], term);
+
+        // Multiply element-wise with remaining vectors
+        for &idx in multiset.iter().skip(1) {
+          term = term * products[idx][row];
+          println!("After multiplying with M{}: {:?}", idx, term);
+        }
+
+        // Multiply by constant and add to sum
+        let contribution = self.constants[i] * term;
+        println!("Adding c{} * term = {:?} to sum", i, contribution);
+        sum = sum + contribution;
+        println!("Current sum: {:?}", sum);
       }
+
+      if sum != F::ZERO {
+        println!("Row {} failed: final sum {:?} ≠ 0\n", row, sum);
+        return false;
+      }
+      println!("Row {} satisfied: final sum = 0\n", row);
     }
+
+    println!("All constraints satisfied!");
     true
   }
 }
@@ -113,40 +83,35 @@ impl<F: Field> CCS<F> {
 #[cfg(test)]
 mod tests {
   use super::*;
+  use crate::mock::F17;
 
   #[test]
-  #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
-  fn test_allocations() {
-    let mut ccs = CCS::<F17>::new();
-    ccs.alloc_private_input();
-    ccs.alloc_public_input();
+  fn test_ccs_satisfaction() {
+    println!("\nSetting up CCS for constraint x * y = z");
 
-    let gate = Gate {
-      inputs:    vec![Variable::PublicInput(0), Variable::PrivateInput(0)],
-      constants: vec![F17::ONE, F17::ONE],
-      output:    Variable::Aux(0),
-    };
-    let constraint = Constraint::Multiplication(gate);
-    ccs.alloc_constraint(constraint);
-  }
+    // For z = (y, z, 1, x), create matrices:
+    let m1 = SparseMatrix::new_rows_cols(1, 4).write(0, 3, F17::ONE); // Select x
+    let m2 = SparseMatrix::new_rows_cols(1, 4).write(0, 0, F17::ONE); // Select y
+    let m3 = SparseMatrix::new_rows_cols(1, 4).write(0, 1, F17::ONE); // Select z
 
-  #[test]
-  #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
-  fn test_satisfy() {
-    let mut ccs = CCS::<F17>::new();
-    ccs.alloc_private_input();
-    ccs.alloc_public_input();
+    println!("Created matrices:");
+    println!("M1 (selects x): {:?}", m1);
+    println!("M2 (selects y): {:?}", m2);
+    println!("M3 (selects z): {:?}", m3);
 
-    let gate = Gate {
-      inputs:    vec![Variable::PublicInput(0), Variable::PrivateInput(0)],
-      constants: vec![F17::ONE, F17::from(2)],
-      output:    Variable::Aux(0),
-    };
-    let constraint = Constraint::Multiplication(gate);
-    ccs.alloc_constraint(constraint);
+    let mut ccs = CCS::new();
+    ccs.matrices = vec![m1, m2, m3];
+    // Encode x * y - z = 0
+    ccs.multisets = vec![vec![0, 1], vec![2]];
+    ccs.constants = vec![F17::ONE, F17::from(-1)];
 
-    assert!(ccs.is_satisfied(vec![F17::from(5)], vec![F17::from(1)], vec![F17::from(5 * 2)]));
+    println!("\nTesting valid case: x=2, y=3, z=6");
+    let x = vec![F17::from(2)]; // public input x = 2
+    let w = vec![F17::from(3), F17::from(6)]; // witness y = 3, z = 6
+    assert!(ccs.is_satisfied(w.clone(), x.clone()));
 
-    assert!(!ccs.is_satisfied(vec![F17::from(1)], vec![F17::from(1)], vec![F17::from(5 * 2)]));
+    println!("\nTesting invalid case: x=2, y=3, z=7");
+    let w_invalid = vec![F17::from(3), F17::from(7)]; // witness y = 3, z = 7 (invalid)
+    assert!(!ccs.is_satisfied(w_invalid, x));
   }
 }

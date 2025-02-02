@@ -29,7 +29,6 @@ pub enum Constraint<F> {
 
 #[derive(Debug, Clone)]
 pub struct Gate<F> {
-  width:     usize,
   inputs:    Vec<Variable>,
   output:    VariableOrConstant<F>,
   constants: Vec<F>,
@@ -118,7 +117,6 @@ mod tests {
     ccs.alloc_public_input();
 
     let gate = Gate {
-      width:     2,
       inputs:    vec![Variable::PublicInput(0), Variable::PrivateInput(0)],
       constants: vec![F17::ONE, F17::ONE],
       output:    VariableOrConstant::Constant(F17::from(10)),
@@ -135,7 +133,6 @@ mod tests {
     ccs.alloc_public_input();
 
     let gate = Gate {
-      width:     2,
       inputs:    vec![Variable::PublicInput(0), Variable::PrivateInput(0)],
       constants: vec![F17::ONE, F17::from(2)],
       output:    VariableOrConstant::Constant(F17::from(10)),

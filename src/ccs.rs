@@ -19,6 +19,7 @@ pub struct CCS<F: Field> {
   constraints: Vec<Constraint<F>>,
   public_inputs:  usize,
   private_inputs: usize,
+  aux_inputs:     usize,
 }
 
 #[derive(Debug, Clone)]
@@ -30,7 +31,7 @@ pub enum Constraint<F> {
 #[derive(Debug, Clone)]
 pub struct Gate<F> {
   inputs:    Vec<Variable>,
-  output:    VariableOrConstant<F>,
+  output:    Variable,
   constants: Vec<F>,
 }
 
@@ -41,12 +42,6 @@ pub enum Variable {
   Aux(usize),
 }
 
-#[derive(Debug, Clone)]
-pub enum VariableOrConstant<F> {
-  Variable(Variable),
-  Constant(F),
-}
-
 impl<F: Field> CCS<F> {
   pub fn new() -> Self { Self::default() }
 
@@ -54,11 +49,19 @@ impl<F: Field> CCS<F> {
 
   pub fn alloc_private_input(&mut self) { self.private_inputs += 1 }
 
+  pub fn alloc_aux_input(&mut self) { self.aux_inputs += 1; }
+
   pub fn alloc_constraint(&mut self, constraint: Constraint<F>) {
     self.constraints.push(constraint);
   }
 
-  pub fn is_satisfied(&self, public_inputs: Vec<F>, private_inputs: Vec<F>) -> bool {
+  // TODO: This should be done with matrix multiplication probably
+  pub fn is_satisfied(
+    &self,
+    public_inputs: Vec<F>,
+    private_inputs: Vec<F>,
+    aux_inputs: Vec<F>,
+  ) -> bool {
     for constraint in &self.constraints {
       match constraint {
         Constraint::Addition(gate) => {
@@ -69,12 +72,13 @@ impl<F: Field> CCS<F> {
             .map(|(var, c)| match var {
               Variable::PublicInput(idx) => c * public_inputs[*idx],
               Variable::PrivateInput(idx) => c * private_inputs[*idx],
-              Variable::Aux(_idx) => todo!(),
+              Variable::Aux(idx) => c * aux_inputs[*idx],
             })
             .sum::<F>()
             != match gate.output {
-              VariableOrConstant::Constant(val) => val,
-              VariableOrConstant::Variable(_) => todo!(),
+              Variable::PublicInput(idx) => public_inputs[idx],
+              Variable::PrivateInput(idx) => private_inputs[idx],
+              Variable::Aux(idx) => aux_inputs[idx],
             }
           {
             return false;
@@ -88,12 +92,13 @@ impl<F: Field> CCS<F> {
             .map(|(var, c)| match var {
               Variable::PublicInput(idx) => c * public_inputs[*idx],
               Variable::PrivateInput(idx) => c * private_inputs[*idx],
-              Variable::Aux(_idx) => todo!(),
+              Variable::Aux(idx) => c * aux_inputs[*idx],
             })
             .product::<F>()
             != match gate.output {
-              VariableOrConstant::Constant(val) => val,
-              VariableOrConstant::Variable(_) => todo!(),
+              Variable::PublicInput(idx) => public_inputs[idx],
+              Variable::PrivateInput(idx) => private_inputs[idx],
+              Variable::Aux(idx) => aux_inputs[idx],
             }
           {
             return false;
@@ -119,7 +124,7 @@ mod tests {
     let gate = Gate {
       inputs:    vec![Variable::PublicInput(0), Variable::PrivateInput(0)],
       constants: vec![F17::ONE, F17::ONE],
-      output:    VariableOrConstant::Constant(F17::from(10)),
+      output:    Variable::Aux(0),
     };
     let constraint = Constraint::Multiplication(gate);
     ccs.alloc_constraint(constraint);
@@ -135,13 +140,13 @@ mod tests {
     let gate = Gate {
       inputs:    vec![Variable::PublicInput(0), Variable::PrivateInput(0)],
       constants: vec![F17::ONE, F17::from(2)],
-      output:    VariableOrConstant::Constant(F17::from(10)),
+      output:    Variable::Aux(0),
     };
     let constraint = Constraint::Multiplication(gate);
     ccs.alloc_constraint(constraint);
 
-    assert!(ccs.is_satisfied(vec![F17::from(5)], vec![F17::from(1)]));
+    assert!(ccs.is_satisfied(vec![F17::from(5)], vec![F17::from(1)], vec![F17::from(5 * 2)]));
 
-    assert!(!ccs.is_satisfied(vec![F17::from(1)], vec![F17::from(1)]));
+    assert!(!ccs.is_satisfied(vec![F17::from(1)], vec![F17::from(1)], vec![F17::from(5 * 2)]));
   }
 }

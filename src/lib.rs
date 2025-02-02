@@ -7,6 +7,7 @@ use wasm_bindgen_test::wasm_bindgen_test;
 #[cfg(test)] use {mock::F17, rstest::rstest};
 
 pub mod ccs;
+pub mod circuit;
 pub mod matrix;
 
 #[cfg(test)]

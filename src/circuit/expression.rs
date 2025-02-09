@@ -1,6 +1,6 @@
 use super::*;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Variable {
   Public(usize),
   Witness(usize),

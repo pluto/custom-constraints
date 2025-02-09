@@ -3,6 +3,81 @@ use super::*;
 use crate::mock::F17;
 
 #[test]
+fn test_compute_degree_base_cases() {
+  // Constants and variables should have degree 1
+  let constant = Expression::Constant(F17::from(5));
+  assert_eq!(compute_degree(&constant), 1, "Constants should have degree 1");
+
+  let public = Expression::<F17>::Variable(Variable::Public(0));
+  assert_eq!(compute_degree(&public), 1, "Public variables should have degree 1");
+
+  let witness = Expression::<F17>::Variable(Variable::Witness(0));
+  assert_eq!(compute_degree(&witness), 1, "Witness variables should have degree 1");
+
+  let aux = Expression::<F17>::Variable(Variable::Aux(0));
+  assert_eq!(compute_degree(&aux), 1, "Auxiliary variables should have degree 1");
+}
+
+#[test]
+fn test_compute_degree_addition() {
+  // Addition should take the maximum degree of its terms
+  let x = Expression::<F17>::Variable(Variable::Public(0));
+  let y = Expression::Variable(Variable::Witness(0));
+
+  // Simple addition: x + y (degree 1)
+  let simple_add = Expression::Add(vec![x.clone(), y.clone()]);
+  assert_eq!(compute_degree(&simple_add), 1, "x + y should have degree 1");
+
+  // x + (x * y) (degree 2)
+  let mul = Expression::Mul(vec![x.clone(), y.clone()]);
+  let mixed_add = Expression::Add(vec![x.clone(), mul.clone()]);
+  assert_eq!(compute_degree(&mixed_add), 2, "x + (x * y) should have degree 2");
+
+  // x + (x * y) + (x * y * y) (degree 3)
+  let triple_mul = Expression::Mul(vec![x.clone(), y.clone(), y.clone()]);
+  let complex_add = Expression::Add(vec![x, mul, triple_mul]);
+  assert_eq!(compute_degree(&complex_add), 3, "x + (x * y) + (x * y * y) should have degree 3");
+}
+
+#[test]
+fn test_compute_degree_multiplication() {
+  // Multiplication should sum the degrees of its factors
+  let x = Expression::<F17>::Variable(Variable::Public(0));
+  let y = Expression::Variable(Variable::Witness(0));
+
+  // Simple multiplication: x * y (degree 2)
+  let simple_mul = Expression::Mul(vec![x.clone(), y.clone()]);
+  assert_eq!(compute_degree(&simple_mul), 2, "x * y should have degree 2");
+
+  // x * y * y (degree 3)
+  let triple_mul = Expression::Mul(vec![x.clone(), y.clone(), y.clone()]);
+  assert_eq!(compute_degree(&triple_mul), 3, "x * y * y should have degree 3");
+
+  // (x * y) * (y * y) (degree 4)
+  let double_mul = Expression::Mul(vec![y.clone(), y.clone()]);
+  let nested_mul = Expression::Mul(vec![simple_mul, double_mul]);
+  assert_eq!(compute_degree(&nested_mul), 4, "(x * y) * (y * y) should have degree 4");
+}
+
+#[test]
+fn test_compute_degree_complex_expressions() {
+  let x = Expression::<F17>::Variable(Variable::Public(0));
+  let y = Expression::Variable(Variable::Witness(0));
+
+  // Build (x * y * y) + (x + y)
+  let triple_mul = Expression::Mul(vec![x.clone(), y.clone(), y.clone()]);
+  let simple_add = Expression::Add(vec![x.clone(), y.clone()]);
+  let complex = Expression::Add(vec![triple_mul, simple_add]);
+  assert_eq!(compute_degree(&complex), 3, "(x * y * y) + (x + y) should have degree 3");
+
+  // Build ((x * y) + y) * (x * x)
+  let mul_add = Expression::Add(vec![Expression::Mul(vec![x.clone(), y.clone()]), y.clone()]);
+  let square = Expression::Mul(vec![x.clone(), x.clone()]);
+  let complex_mul = Expression::Mul(vec![mul_add, square]);
+  assert_eq!(compute_degree(&complex_mul), 4, "((x * y) + y) * (x * x) should have degree 4");
+}
+
+#[test]
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
 fn test_expression_arithmetic() {
   let mut builder = Circuit::new();
@@ -46,7 +121,7 @@ fn test_expression_arithmetic() {
 #[test]
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
 fn test_multiple_outputs() {
-  let mut builder = Circuit::<F17>::new();
+  let mut builder = Circuit::<_, F17>::new();
 
   // Let's create a circuit that computes several outputs
   let x = builder.x(0); // Public input x
@@ -81,7 +156,7 @@ fn test_multiple_outputs() {
 #[test]
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
 fn test_aux_to_output_conversion() {
-  let mut builder = Circuit::<F17>::new();
+  let mut builder = Circuit::<_, F17>::new();
 
   // Create a more complex computation that needs auxiliary variables
   let x = builder.x(0);
@@ -115,7 +190,7 @@ fn test_aux_to_output_conversion() {
 #[test]
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
 fn test_mixed_aux_and_output() {
-  let mut builder = Circuit::<F17>::new();
+  let mut builder = Circuit::<_, F17>::new();
 
   let x = builder.x(0);
   let y = builder.w(0);
@@ -150,7 +225,7 @@ fn test_mixed_aux_and_output() {
 #[test]
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
 fn test_reduce_degree() {
-  let mut builder = Circuit::<F17>::new();
+  let mut builder = Circuit::<_, F17>::new();
 
   // Create expression: x0 * x1 * x2 * x3
   let x0 = builder.x(0);
@@ -177,50 +252,36 @@ fn test_reduce_degree() {
 #[test]
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
 fn test_complex_degree_reduction() {
-  let mut builder = Circuit::<F17>::new();
+  let mut builder = Circuit::<_, F17>::new();
 
-  // Let's evaluate two related polynomials:
-  // P1(x,y) = (x^3 + y^2)^2 * (x + y)
-  // P2(x,y) = x * y^4 + (x^3 + y^2)^3
+  // Create inputs and build expressions (same as before)
+  let x = builder.x(0);
+  let y = builder.w(0);
 
-  // Create our inputs
-  let x = builder.x(0); // Public input x
-  let y = builder.w(0); // Witness input y
-
-  // First, let's build some common subexpressions
-  // x^3 = x * x * x
   let x_cubed = x.clone() * x.clone() * x.clone();
-
-  // y^2 = y * y
   let y_squared = y.clone() * y.clone();
-
-  // (x^3 + y^2) - this is used in both polynomials
   let common_term = x_cubed.clone() + y_squared.clone();
 
-  // Now build P1(x,y) = (x^3 + y^2)^2 * (x + y)
-  let common_term_squared = common_term.clone() * common_term.clone(); // degree 4
-  let x_plus_y = x.clone() + y.clone(); // degree 1
-  let p1 = common_term_squared.clone() * x_plus_y; // Total degree: 5
+  // Build P1: (x^3 + y^2)^2 * (x + y)
+  let common_term_squared = common_term.clone() * common_term.clone();
+  let x_plus_y = x.clone() + y.clone();
+  let p1 = common_term_squared.clone() * x_plus_y;
 
-  // Now build P2(x,y) = x * y^4 + (x^3 + y^2)^3
-  let y_fourth = y_squared.clone() * y_squared.clone(); // degree 4
-  let term1 = x.clone() * y_fourth; // degree 5
-  let common_term_cubed = common_term * common_term_squared; // degree 6
-  let p2 = term1 + common_term_cubed; // Max degree: 6
+  // Build P2: x * y^4 + (x^3 + y^2)^3
+  let y_fourth = y_squared.clone() * y_squared.clone();
+  let term1 = x.clone() * y_fourth;
+  let common_term_cubed = common_term * common_term_squared;
+  let p2 = term1 + common_term_cubed;
 
-  // Let's reduce these to degree 3 expressions
-  println!("\nReducing expressions to degree 3:");
-  let p1_reduced = builder.reduce_degree(p1.clone(), 3);
-  let p2_reduced = builder.reduce_degree(p2.clone(), 3);
-
-  // Mark both as outputs
-  builder.mark_output(p1_reduced);
-  builder.mark_output(p2_reduced);
-
-  // Print the full computation graph
+  // Print original expressions before reduction
   println!("\nOriginal P1: {}", p1);
   println!("Original P2: {}", p2);
-  println!("\nAuxiliary and output variables:");
+
+  // Mark outputs
+  builder.mark_output(p1);
+  builder.mark_output(p2);
+
+  println!("\nOriginal circuit state:");
   for (expr, var) in builder.expressions() {
     match var {
       Variable::Aux(idx) => println!("y_{} := {}", idx, expr),
@@ -229,14 +290,18 @@ fn test_complex_degree_reduction() {
     }
   }
 
-  // Verify degrees of all expressions
-  println!("\nVerifying degrees of all expressions:");
-  for (expr, var) in builder.expressions() {
+  // Now fix the degree
+  let deg_3_circuit = builder.fix_degree::<3>();
+
+  // Verify degrees after fixing
+  println!("\nDegree-constrained expressions:");
+  for (expr, var) in deg_3_circuit.expressions() {
     let degree = compute_degree(expr);
-    println!("{} has degree {}", var, degree);
+    println!("{} := {} (degree {})", var, expr, degree);
     assert!(degree <= 3, "Expression {} exceeds degree bound", var);
   }
 
-  let ccs = builder.into_ccs(3);
-  println!("{ccs}");
+  let optimized_circuit = deg_3_circuit.optimize();
+  let ccs = optimized_circuit.into_ccs();
+  println!("\nFinal CCS:\n{}", ccs);
 }

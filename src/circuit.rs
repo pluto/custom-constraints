@@ -1,4 +1,7 @@
-use std::fmt::{self, Display, Formatter};
+use std::{
+  collections::HashMap,
+  fmt::{self, Display, Formatter},
+};
 
 use ark_ff::Field;
 
@@ -10,6 +13,8 @@ pub struct CircuitBuilder<F: Field> {
   pub aux_count:    usize,
   pub output_count: usize,
   pub expressions:  Vec<(Expression<F>, Variable)>,
+  // Add a memo map that stores expression strings to their corresponding variables
+  memo:             HashMap<String, Variable>,
 }
 
 // Variable and Expression enums remain unchanged
@@ -37,6 +42,7 @@ impl<F: Field> CircuitBuilder<F> {
       aux_count:    0,
       output_count: 0,
       expressions:  Vec::new(),
+      memo:         HashMap::new(),
     }
   }
 
@@ -58,16 +64,24 @@ impl<F: Field> CircuitBuilder<F> {
     var
   }
 
-  fn new_output(&mut self) -> Variable {
-    let var = Variable::Output(self.aux_count);
-    self.aux_count += 1;
-    var
+  fn get_or_create_aux(&mut self, expr: &Expression<F>) -> Expression<F> {
+    // Create a string representation of the expression for memoization
+    let expr_key = format!("{}", expr);
+
+    if let Some(&var) = self.memo.get(&expr_key) {
+      // We've seen this expression before, reuse the existing variable
+      Expression::Variable(var)
+    } else {
+      // First time seeing this expression, create new auxiliary variable
+      let var = self.new_aux();
+      self.expressions.push((expr.clone(), var));
+      self.memo.insert(expr_key, var);
+      Expression::Variable(var)
+    }
   }
 
   pub fn add_internal(&mut self, expr: Expression<F>) -> Expression<F> {
-    let var = self.new_aux();
-    self.expressions.push((expr, var));
-    Expression::Variable(var)
+    self.get_or_create_aux(&expr)
   }
 
   pub fn mark_output(&mut self, expr: Expression<F>) -> Expression<F> {
@@ -127,6 +141,80 @@ impl<F: Field> CircuitBuilder<F> {
         Expression::Add(terms.iter().map(|term| self.expand(term)).collect()),
       Expression::Mul(factors) =>
         Expression::Mul(factors.iter().map(|factor| self.expand(factor)).collect()),
+    }
+  }
+
+  fn compute_degree(&self, expr: &Expression<F>) -> usize {
+    match expr {
+      // Base cases: variables and constants have degree 1
+      Expression::Variable(_) | Expression::Constant(_) => 1,
+
+      // For addition, take the maximum degree of any term
+      Expression::Add(terms) =>
+        terms.iter().map(|term| self.compute_degree(term)).max().unwrap_or(0),
+
+      // For multiplication, sum the degrees of all factors
+      Expression::Mul(factors) => factors.iter().map(|factor| self.compute_degree(factor)).sum(),
+    }
+  }
+
+  /// Reduces an expression to have maximum degree d by introducing auxiliary variables
+  pub fn reduce_degree(&mut self, expr: Expression<F>, d: usize) -> Expression<F> {
+    let current_degree = self.compute_degree(&expr);
+    if current_degree <= d {
+      return expr;
+    }
+
+    match expr {
+      Expression::Mul(factors) => {
+        let mut current_group = Vec::new();
+        let mut current_group_degree = 0;
+        let mut reduced_factors = Vec::new();
+
+        for factor in factors {
+          let factor_degree = self.compute_degree(&factor);
+
+          if current_group_degree + factor_degree > d {
+            if !current_group.is_empty() {
+              let group_expr = if current_group.len() == 1 {
+                current_group.pop().unwrap()
+              } else {
+                Expression::Mul(current_group.drain(..).collect())
+              };
+              // Use get_or_create_aux instead of directly adding
+              reduced_factors.push(self.get_or_create_aux(&group_expr));
+              current_group_degree = 0;
+            }
+          }
+
+          let reduced_factor = self.reduce_degree(factor, d);
+          let reduced_factor_degree = self.compute_degree(&reduced_factor);
+
+          current_group.push(reduced_factor);
+          current_group_degree += reduced_factor_degree;
+        }
+
+        if !current_group.is_empty() {
+          let group_expr = if current_group.len() == 1 {
+            current_group.pop().unwrap()
+          } else {
+            Expression::Mul(current_group)
+          };
+          reduced_factors.push(self.get_or_create_aux(&group_expr));
+        }
+
+        if reduced_factors.len() > 1 {
+          self.reduce_degree(Expression::Mul(reduced_factors), d)
+        } else {
+          reduced_factors.pop().unwrap()
+        }
+      },
+      Expression::Add(terms) => {
+        let reduced_terms: Vec<_> =
+          terms.into_iter().map(|term| self.reduce_degree(term, d)).collect();
+        Expression::Add(reduced_terms)
+      },
+      _ => expr,
     }
   }
 }
@@ -228,10 +316,10 @@ impl<F: Field + Display> Display for Expression<F> {
 impl Display for Variable {
   fn fmt(&self, f: &mut Formatter) -> fmt::Result {
     match self {
-      Variable::Public(i) => write!(f, "x_{}", i),
-      Variable::Witness(j) => write!(f, "w_{}", j),
-      Variable::Aux(k) => write!(f, "y_{}", k),
-      Variable::Output(l) => write!(f, "o_{}", l),
+      Self::Public(i) => write!(f, "x_{}", i),
+      Self::Witness(j) => write!(f, "w_{}", j),
+      Self::Aux(k) => write!(f, "y_{}", k),
+      Self::Output(l) => write!(f, "o_{}", l),
     }
   }
 }
@@ -385,5 +473,91 @@ mod tests {
     // Verify final state
     assert_eq!(builder.output_count, 2);
     assert_eq!(builder.aux_count, 1); // aux1 remains as auxiliary
+  }
+
+  #[test]
+  #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+  fn test_reduce_degree() {
+    let mut builder = CircuitBuilder::<F17>::new();
+
+    // Create expression: x0 * x1 * x2 * x3
+    let x0 = builder.x(0);
+    let x1 = builder.x(1);
+    let x2 = builder.x(2);
+    let x3 = builder.x(3);
+    let expr = x0 * x1 * x2 * x3; // degree 4
+
+    // Reduce to degree 2
+    let reduced = builder.reduce_degree(expr, 2);
+
+    println!("Reduced expression: {}", reduced);
+    println!("\nAuxiliary variables:");
+    for (expr, var) in builder.expressions() {
+      println!("{} := {}", var, expr);
+    }
+  }
+
+  #[test]
+  #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+  fn test_complex_degree_reduction() {
+    let mut builder = CircuitBuilder::<F17>::new();
+
+    // Let's evaluate two related polynomials:
+    // P1(x,y) = (x^3 + y^2)^2 * (x + y)
+    // P2(x,y) = x * y^4 + (x^3 + y^2)^3
+
+    // Create our inputs
+    let x = builder.x(0); // Public input x
+    let y = builder.w(0); // Witness input y
+
+    // First, let's build some common subexpressions
+    // x^3 = x * x * x
+    let x_cubed = x.clone() * x.clone() * x.clone();
+
+    // y^2 = y * y
+    let y_squared = y.clone() * y.clone();
+
+    // (x^3 + y^2) - this is used in both polynomials
+    let common_term = x_cubed.clone() + y_squared.clone();
+
+    // Now build P1(x,y) = (x^3 + y^2)^2 * (x + y)
+    let common_term_squared = common_term.clone() * common_term.clone(); // degree 4
+    let x_plus_y = x.clone() + y.clone(); // degree 1
+    let p1 = common_term_squared.clone() * x_plus_y; // Total degree: 5
+
+    // Now build P2(x,y) = x * y^4 + (x^3 + y^2)^3
+    let y_fourth = y_squared.clone() * y_squared.clone(); // degree 4
+    let term1 = x.clone() * y_fourth; // degree 5
+    let common_term_cubed = common_term * common_term_squared; // degree 6
+    let p2 = term1 + common_term_cubed; // Max degree: 6
+
+    // Let's reduce these to degree 3 expressions
+    println!("\nReducing expressions to degree 3:");
+    let p1_reduced = builder.reduce_degree(p1.clone(), 3);
+    let p2_reduced = builder.reduce_degree(p2.clone(), 3);
+
+    // Mark both as outputs
+    builder.mark_output(p1_reduced);
+    builder.mark_output(p2_reduced);
+
+    // Print the full computation graph
+    println!("\nOriginal P1: {}", p1);
+    println!("Original P2: {}", p2);
+    println!("\nAuxiliary and output variables:");
+    for (expr, var) in builder.expressions() {
+      match var {
+        Variable::Aux(idx) => println!("y_{} := {}", idx, expr),
+        Variable::Output(idx) => println!("o_{} := {}", idx, expr),
+        _ => println!("{} := {}", var, expr),
+      }
+    }
+
+    // Verify degrees of all expressions
+    println!("\nVerifying degrees of all expressions:");
+    for (expr, var) in builder.expressions() {
+      let degree = builder.compute_degree(expr);
+      println!("{} has degree {}", var, degree);
+      assert!(degree <= 3, "Expression {} exceeds degree bound", var);
+    }
   }
 }

@@ -80,6 +80,41 @@ impl<F: Field + std::fmt::Debug> CCS<F> {
     println!("All constraints satisfied!");
     true
   }
+
+  pub fn new_degree(d: usize) -> Self {
+    assert!(d >= 2, "Degree must be positive");
+
+    let mut ccs = CCS { constants: Vec::new(), multisets: Vec::new(), matrices: Vec::new() };
+
+    // We'll create terms starting from highest degree down to degree 1
+    // For a degree d CCS, we need terms of all degrees from d down to 1
+    let mut next_matrix_index = 0;
+
+    // Handle each degree from d down to 1
+    for degree in (1..=d).rev() {
+      // For a term of degree k, we need k matrices Hadamard multiplied
+      let matrix_indices: Vec<usize> = (0..degree).map(|i| next_matrix_index + i).collect();
+
+      // Add this term's multiset and its coefficient
+      ccs.multisets.push(matrix_indices);
+      ccs.constants.push(F::ONE);
+
+      // Update our tracking of matrix indices
+      next_matrix_index += degree;
+    }
+
+    // Calculate total number of matrices needed:
+    // For degree d, we need d + (d-1) + ... + 1 matrices
+    // This is the triangular number formula: n(n+1)/2
+    let total_matrices = (d * (d + 1)) / 2;
+
+    // Initialize empty matrices - their content will be filled during conversion
+    for _ in 0..total_matrices {
+      ccs.matrices.push(SparseMatrix::new_rows_cols(1, 0));
+    }
+
+    ccs
+  }
 }
 
 impl<F: Field + Display> Display for CCS<F> {

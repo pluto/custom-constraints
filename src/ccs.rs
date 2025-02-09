@@ -132,7 +132,7 @@ impl<F: Field + Display> Display for CCS<F> {
     writeln!(f, "\nConstraints:")?;
 
     // We expect multisets to come in pairs, each pair forming one constraint
-    for i in (0..self.multisets.len()).step_by(2) {
+    for i in (0..self.multisets.len()) {
       // Write the constant for the first multiset
       write!(f, "{}·(", self.constants[i])?;
 
@@ -145,22 +145,12 @@ impl<F: Field + Display> Display for CCS<F> {
       }
       write!(f, ")")?;
 
-      // If we have a second multiset in the pair
-      if i + 1 < self.multisets.len() {
-        // Write the constant and Hadamard product for the second multiset
-        write!(f, " + {}·(", self.constants[i + 1])?;
-        if let Some(first_idx) = self.multisets[i + 1].first() {
-          write!(f, "M{}", first_idx)?;
-          for &idx in &self.multisets[i + 1][1..] {
-            write!(f, "∘M{}", idx)?;
-          }
-        }
-        write!(f, ")")?;
+      // Sum up the expressions to the last one
+      if i < self.multisets.len() - 1 {
+        write!(f, " + ")?;
       }
-
-      // Each constraint equals zero
-      writeln!(f, " = 0")?;
     }
+    writeln!(f, " = 0")?;
     Ok(())
   }
 }

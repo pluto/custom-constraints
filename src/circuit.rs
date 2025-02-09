@@ -235,33 +235,100 @@ impl<F: Field> CircuitBuilder<F> {
   }
 
   pub fn into_ccs(self, d: usize) -> CCS<F> {
-    // First create the CCS with the right degree
+    assert!(d >= 2, "Degree must be at least 2");
+
+    // First create CCS with degree d
     let mut ccs = CCS::new_degree(d);
 
-    // Calculate total size of z vector
-    let z_len = 1 + self.pub_inputs + self.wit_inputs + self.aux_count + self.output_count;
+    // Calculate dimensions for our matrices:
+    // - First column (index 0) is for constants (1)
+    // - Then public inputs (x_i)
+    // - Then witness inputs (w_i)
+    // - Then auxiliary variables (y_i)
+    // - Finally output variables (o_i)
+    let num_cols = 1 + self.pub_inputs + self.wit_inputs + self.aux_count + self.output_count;
 
-    // Initialize all matrices with the right dimensions
+    // Initialize all matrices with proper dimensions
+    // We need d matrices for degree d terms, 2 for degree 2 terms, and 1 for degree 1 terms
     for matrix in ccs.matrices.iter_mut() {
-      *matrix = SparseMatrix::new_rows_cols(z_len, z_len);
+      *matrix = SparseMatrix::new_rows_cols(num_cols, num_cols);
     }
 
-    // Process each expression in our circuit
+    // Process each expression to build our constraints
     for (expr, var) in self.expressions.iter() {
-      // Get the row index where this constraint should appear
-      let row_idx = self.get_z_position(var);
-
-      // Create constraint for this expression
-      //   self.create_constraint(&mut ccs, row_idx, expr, *var);
+      // The constraint for each variable goes in the row matching its position
+      let row = self.get_z_position(var);
+      self.create_constraint(&mut ccs, d, row, expr, var);
     }
+
     ccs
   }
 
-  // Helper to get position of a value in expression
+  fn create_constraint(
+    &self,
+    ccs: &mut CCS<F>,
+    d: usize,
+    row: usize,
+    expr: &Expression<F>,
+    output: &Variable,
+  ) {
+    // Always write -1 times the output variable to the last matrix (M5 in degree 3 case)
+    let output_pos = self.get_z_position(output);
+    ccs.matrices.last_mut().unwrap().write(row, output_pos, -F::ONE);
+
+    match expr {
+      Expression::Add(terms) => {
+        // For addition, process each term independently in the same row
+        for term in terms {
+          self.process_term(ccs, d, row, term);
+        }
+      },
+      // Single term (not an addition)
+      _ => self.process_term(ccs, d, row, expr),
+    }
+  }
+
+  fn process_term(&self, ccs: &mut CCS<F>, d: usize, row: usize, term: &Expression<F>) {
+    match term {
+      Expression::Mul(factors) => {
+        match factors.len() {
+          n if n == d => {
+            // Highest degree term - use first d matrices
+            // Each factor goes into its corresponding matrix
+            for (i, factor) in factors.iter().enumerate() {
+              let pos = self.get_variable_position(factor);
+              ccs.matrices[i].write(row, pos, F::ONE);
+            }
+          },
+          2 => {
+            // Quadratic term - use the next two matrices after the degree d matrices
+            let offset = d; // Start after the degree d matrices
+            for (i, factor) in factors.iter().enumerate() {
+              let pos = self.get_variable_position(factor);
+              ccs.matrices[offset + i].write(row, pos, F::ONE);
+            }
+          },
+          1 => {
+            // Linear term - use the last matrix
+            let pos = self.get_variable_position(&factors[0]);
+            ccs.matrices.last_mut().unwrap().write(row, pos, F::ONE);
+          },
+          _ => panic!("Term degree must be 1, 2, or {}", d),
+        }
+      },
+      // Variables and constants go in the last matrix
+      _ => {
+        let pos = self.get_variable_position(term);
+        ccs.matrices.last_mut().unwrap().write(row, pos, F::ONE);
+      },
+    }
+  }
+
+  // Helper to get position of a variable in z vector
   fn get_variable_position(&self, expr: &Expression<F>) -> usize {
     match expr {
       Expression::Variable(var) => self.get_z_position(var),
-      Expression::Constant(_) => 0,
+      Expression::Constant(_) => 0, // Constants are at position 0
       _ => panic!("Expected a variable or constant"),
     }
   }
@@ -607,5 +674,8 @@ mod tests {
       println!("{} has degree {}", var, degree);
       assert!(degree <= 3, "Expression {} exceeds degree bound", var);
     }
+
+    let ccs = builder.into_ccs(3);
+    println!("{ccs}");
   }
 }

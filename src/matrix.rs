@@ -166,7 +166,7 @@ impl<F: Field + Display> Display for SparseMatrix<F> {
   fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
     // First, we'll find the maximum width needed for any number
     // This helps us align columns nicely
-    let max_width = self.values.iter().map(|v| format!("{}", v).len()).max().unwrap_or(1).max(1); // At least 1 character for "0"
+    let max_width = self.values.iter().map(|v| format!("{v}").len()).max().unwrap_or(1).max(1); // At least 1 character for "0"
 
     // For each row...
     for row in 0..self.row_offsets.len() - 1 {
@@ -188,7 +188,7 @@ impl<F: Field + Display> Display for SparseMatrix<F> {
         if current_col < row_end - row_start && self.col_indices[row_start + current_col] == col {
           // We found a non-zero element
           let val = &self.values[row_start + current_col];
-          write!(f, "{:>width$}", val, width = max_width)?;
+          write!(f, "{val:>max_width$}")?;
           current_col += 1;
         } else {
           // This position is zero

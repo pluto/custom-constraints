@@ -221,77 +221,128 @@ impl<F: Field> Circuit<Building, F> {
 
 impl<const D: usize, F: Field> Circuit<DegreeConstrained<D>, F> {
   pub fn optimize(self) -> Circuit<Optimized<D>, F> {
-    // Create a new building circuit - this will only contain what we need
+    println!("\nStarting optimization process...");
+
+    // Create a new building circuit
     let mut new_circuit = Circuit::<Building, F>::new();
     new_circuit.pub_inputs = self.pub_inputs;
     new_circuit.wit_inputs = self.wit_inputs;
 
-    // Create a map of definitions for easy lookup
-    let definitions: HashMap<Variable, Expression<F>> =
-      self.expressions.iter().map(|(expr, var)| (*var, expr.clone())).collect();
+    println!("\nInitial definitions:");
+    let definitions: HashMap<Variable, Expression<F>> = self
+      .expressions
+      .iter()
+      .map(|(expr, var)| {
+        println!("{} := {} (degree {})", var, expr, compute_degree(expr));
+        (*var, expr.clone())
+      })
+      .collect();
 
-    // Create a map to track high-degree aux variables we've processed
+    // Map to track how we process auxiliary variables
     let mut aux_map = HashMap::new();
 
-    // Helper function to process expressions
     fn process_expr<const D: usize, F: Field>(
       expr: &Expression<F>,
       definitions: &HashMap<Variable, Expression<F>>,
       aux_map: &mut HashMap<Variable, Expression<F>>,
       new_circuit: &mut Circuit<Building, F>,
+      depth: usize, // Add depth parameter for indentation
     ) -> Expression<F> {
+      let indent = "  ".repeat(depth);
+
+      println!("{}Processing expression: {}", indent, expr);
+
       match expr {
         Expression::Variable(var @ Variable::Aux(_)) => {
-          // Check if we've seen this aux variable before
+          println!("{}Found auxiliary variable: {}", indent, var);
+
+          // Check if we've processed this before
           if let Some(mapped_expr) = aux_map.get(var) {
+            println!("{}Already processed, reusing: {}", indent, mapped_expr);
             return mapped_expr.clone();
           }
 
           // Get its definition
           if let Some(def) = definitions.get(var) {
             let degree = compute_degree(def);
+            println!("{}Definition has degree {}: {}", indent, degree, def);
+
             if degree == D {
-              // It's degree D, so create a new aux variable
-              let new_expr = process_expr::<D, _>(def, definitions, aux_map, new_circuit);
+              println!("{}Creating new aux var for degree {} expression", indent, D);
+              let new_expr =
+                process_expr::<D, _>(def, definitions, aux_map, new_circuit, depth + 1);
               let result = new_circuit.add_internal(new_expr);
+              println!("{}Created new aux var: {}", indent, result);
               aux_map.insert(*var, result.clone());
               result
             } else {
-              // Lower degree - process its definition directly
-              process_expr::<D, _>(def, definitions, aux_map, new_circuit)
+              println!("{}Using definition directly (degree < {})", indent, D);
+              process_expr::<D, _>(def, definitions, aux_map, new_circuit, depth + 1)
             }
           } else {
+            println!("{}No definition found, using as is", indent);
             expr.clone()
           }
         },
-        Expression::Add(terms) => Expression::Add(
-          terms
-            .iter()
-            .map(|term| process_expr::<D, _>(term, definitions, aux_map, new_circuit))
-            .collect(),
-        ),
-        Expression::Mul(factors) => Expression::Mul(
-          factors
-            .iter()
-            .map(|factor| process_expr::<D, _>(factor, definitions, aux_map, new_circuit))
-            .collect(),
-        ),
-        _ => expr.clone(),
+        Expression::Add(terms) => {
+          println!("{}Processing addition with {} terms", indent, terms.len());
+          let processed = Expression::Add(
+            terms
+              .iter()
+              .map(|term| {
+                let result =
+                  process_expr::<D, _>(term, definitions, aux_map, new_circuit, depth + 1);
+                println!("{}Processed term: {} -> {}", indent, term, result);
+                result
+              })
+              .collect(),
+          );
+          println!("{}Addition result: {}", indent, processed);
+          processed
+        },
+        Expression::Mul(factors) => {
+          println!("{}Processing multiplication with {} factors", indent, factors.len());
+          let processed = Expression::Mul(
+            factors
+              .iter()
+              .map(|factor| {
+                let result =
+                  process_expr::<D, _>(factor, definitions, aux_map, new_circuit, depth + 1);
+                println!("{}Processed factor: {} -> {}", indent, factor, result);
+                result
+              })
+              .collect(),
+          );
+          println!("{}Multiplication result: {}", indent, processed);
+          processed
+        },
+        _ => {
+          println!("{}Base case: {}", indent, expr);
+          expr.clone()
+        },
       }
     }
 
-    // Process each output expression
+    println!("\nProcessing output expressions:");
     let mut output_exprs = Vec::new();
     for (expr, var) in self.expressions {
       if let Variable::Output(_) = var {
-        let new_expr = process_expr::<D, _>(&expr, &definitions, &mut aux_map, &mut new_circuit);
+        println!("\nProcessing output {}", var);
+        let new_expr = process_expr::<D, _>(&expr, &definitions, &mut aux_map, &mut new_circuit, 1);
+        println!("Output {} result: {}", var, new_expr);
         output_exprs.push((var, new_expr));
       }
     }
 
-    // Mark outputs in new circuit
+    println!("\nMarking outputs in new circuit:");
     for (var, expr) in output_exprs {
+      println!("Marking output {} := {}", var, expr);
       new_circuit.mark_output(expr);
+    }
+
+    println!("\nFinal new circuit state:");
+    for (expr, var) in &new_circuit.expressions {
+      println!("{} := {} (degree {})", var, expr, compute_degree(expr));
     }
 
     // Convert to optimized circuit
@@ -496,4 +547,3 @@ fn compute_degree<F: Field>(expr: &Expression<F>) -> usize {
     Expression::Mul(factors) => factors.iter().map(|factor| compute_degree(factor)).sum(),
   }
 }
-

@@ -5,10 +5,11 @@ use ark_ff::Field;
 // The CircuitBuilder struct remains unchanged from your implementation
 #[derive(Clone, Debug)]
 pub struct CircuitBuilder<F: Field> {
-  pub pub_inputs:  usize,
-  pub wit_inputs:  usize,
-  pub aux_count:   usize,
-  pub expressions: Vec<(Expression<F>, Variable)>,
+  pub pub_inputs:   usize,
+  pub wit_inputs:   usize,
+  pub aux_count:    usize,
+  pub output_count: usize,
+  pub expressions:  Vec<(Expression<F>, Variable)>,
 }
 
 // Variable and Expression enums remain unchanged
@@ -17,6 +18,7 @@ pub enum Variable {
   Public(usize),
   Witness(usize),
   Aux(usize),
+  Output(usize),
 }
 
 #[derive(Clone, Debug)]
@@ -28,9 +30,14 @@ pub enum Expression<F: Field> {
 }
 
 impl<F: Field> CircuitBuilder<F> {
-  // All existing methods remain the same
   pub fn new() -> Self {
-    Self { pub_inputs: 0, wit_inputs: 0, aux_count: 0, expressions: Vec::new() }
+    Self {
+      pub_inputs:   0,
+      wit_inputs:   0,
+      aux_count:    0,
+      output_count: 0,
+      expressions:  Vec::new(),
+    }
   }
 
   pub fn x(&mut self, i: usize) -> Expression<F> {
@@ -46,44 +53,76 @@ impl<F: Field> CircuitBuilder<F> {
   pub fn constant(c: F) -> Expression<F> { Expression::Constant(c) }
 
   fn new_aux(&mut self) -> Variable {
-    let aux = Variable::Aux(self.aux_count);
+    let var = Variable::Aux(self.aux_count);
     self.aux_count += 1;
-    aux
+    var
   }
 
-  pub fn add_expression(&mut self, expr: Expression<F>) -> Expression<F> {
+  fn new_output(&mut self) -> Variable {
+    let var = Variable::Output(self.aux_count);
+    self.aux_count += 1;
+    var
+  }
+
+  pub fn add_internal(&mut self, expr: Expression<F>) -> Expression<F> {
     let var = self.new_aux();
-    self.expressions.push((expr, var.clone()));
+    self.expressions.push((expr, var));
     Expression::Variable(var)
+  }
+
+  pub fn mark_output(&mut self, expr: Expression<F>) -> Expression<F> {
+    match expr {
+      Expression::Variable(Variable::Aux(aux_idx)) => {
+        // Find and convert the specific auxiliary variable we want to change
+        for (_, var) in self.expressions.iter_mut() {
+          if *var == Variable::Aux(aux_idx) {
+            *var = Variable::Output(self.output_count);
+            break; // Found and converted the variable
+          }
+        }
+        let output_idx = self.output_count;
+        self.output_count += 1;
+        self.aux_count -= 1; // Decrease aux count since we converted one
+        Expression::Variable(Variable::Output(output_idx))
+      },
+      _ => {
+        // For other expressions, create a new output variable
+        let output_idx = self.output_count;
+        let var = Variable::Output(output_idx);
+        self.output_count += 1;
+        self.expressions.push((expr, var));
+        Expression::Variable(var)
+      },
+    }
   }
 
   pub fn expressions(&self) -> &[(Expression<F>, Variable)] { &self.expressions }
 
-  // New methods for expression expansion
-
-  // Helper method to look up the original expression for an auxiliary variable
-  fn get_aux_definition(&self, aux_idx: usize) -> Option<&Expression<F>> {
-    self.expressions.get(aux_idx).map(|(expr, _)| expr)
+  fn get_definition(&self, var: &Variable) -> Option<&Expression<F>> {
+    match var {
+      Variable::Aux(idx) | Variable::Output(idx) =>
+        self.expressions.get(*idx).map(|(expr, _)| expr),
+      _ => None,
+    }
   }
 
-  // Main method to expand an expression by resolving all auxiliary variables
   pub fn expand(&self, expr: &Expression<F>) -> Expression<F> {
     match expr {
-      // Base cases: constants and non-auxiliary variables remain unchanged
+      // Base cases: constants and input variables remain unchanged
       Expression::Constant(_)
       | Expression::Variable(Variable::Public(_))
       | Expression::Variable(Variable::Witness(_)) => expr.clone(),
 
-      // For auxiliary variables, look up their definition and expand recursively
-      Expression::Variable(Variable::Aux(idx)) => {
-        if let Some(definition) = self.get_aux_definition(*idx) {
+      // For auxiliary and output variables, look up their definition
+      Expression::Variable(var @ (Variable::Aux(_) | Variable::Output(_))) => {
+        if let Some(definition) = self.get_definition(var) {
           self.expand(definition)
         } else {
           expr.clone()
         }
       },
 
-      // For operations, expand all their subexpressions recursively
+      // Recursively expand all subexpressions
       Expression::Add(terms) =>
         Expression::Add(terms.iter().map(|term| self.expand(term)).collect()),
       Expression::Mul(factors) =>
@@ -192,10 +231,12 @@ impl Display for Variable {
       Variable::Public(i) => write!(f, "x_{}", i),
       Variable::Witness(j) => write!(f, "w_{}", j),
       Variable::Aux(k) => write!(f, "y_{}", k),
+      Variable::Output(l) => write!(f, "o_{}", l),
     }
   }
 }
 
+// TODO: all these tests really need to check things more strictly
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -214,17 +255,17 @@ mod tests {
 
     // Test negation: -x0
     let neg_x0 = -x0;
-    let y0 = builder.add_expression(neg_x0);
+    let y0 = builder.add_internal(neg_x0);
 
     // Test subtraction: w0 - x1
     let sub_expr = w0 - x1;
-    let y1 = builder.add_expression(sub_expr);
+    let y1 = builder.add_internal(sub_expr);
 
     // Test complex expression: 3 * (w0 - x1) - (-x0)
     let complex_expr = three * y1 - y0;
-    let y2 = builder.add_expression(complex_expr);
+    let y2 = builder.add_internal(complex_expr);
+    builder.mark_output(y2);
 
-    // Print original expressions
     println!("\nOriginal expressions:");
     for (expr, var) in builder.expressions() {
       if let Variable::Aux(idx) = var {
@@ -232,52 +273,117 @@ mod tests {
       }
     }
 
-    // Print expanded expressions
-    println!("\nExpanded expressions:");
+    println!("\nExpanded forms:");
     for (expr, var) in builder.expressions() {
-      if let Variable::Aux(idx) = var {
-        println!("y_{} := {}", idx, builder.expand(expr));
+      match var {
+        Variable::Aux(idx) => println!("Auxiliary y_{} := {}", idx, builder.expand(expr)),
+        Variable::Output(idx) => println!("Output   o_{} := {}", idx, builder.expand(expr)),
+        _ => println!("Other    {} := {}", var, builder.expand(expr)),
       }
     }
   }
 
   #[test]
   #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
-  fn test_expression_expansion() {
-    let mut builder = CircuitBuilder::new();
+  fn test_multiple_outputs() {
+    let mut builder = CircuitBuilder::<F17>::new();
 
-    // Create base values
-    let x0 = builder.x(0);
-    let x1 = builder.x(1);
-    let w0 = builder.w(0);
-    let w1 = builder.w(1);
-    let five = CircuitBuilder::constant(F17::from(5));
+    // Let's create a circuit that computes several outputs
+    let x = builder.x(0); // Public input x
+    let y = builder.w(0); // Witness y
+    let z = builder.w(1); // Witness z
 
-    // Create first expression: 5 * x_0 * w_0
-    let expr1 = five * x0 * w0;
-    let y0 = builder.add_expression(expr1);
+    // First output: x * y
+    let mul1 = x.clone() * y.clone();
+    let o1 = builder.mark_output(mul1); // This should become o_0
 
-    // Create second expression: x_1 * w_1
-    let expr2 = x1 * w1;
-    let y1 = builder.add_expression(expr2);
+    // Second output: y * z
+    let mul2 = y * z;
+    let o2 = builder.mark_output(mul2); // This should become o_1
 
-    // Create final expression using intermediate results: y_0 + y_1
-    let expr3 = y0 + y1;
-    let y2 = builder.add_expression(expr3);
+    // Third output: x * o1 (using a previous output)
+    let mul3 = x * o1;
+    let o3 = builder.mark_output(mul3); // This should become o_2
 
-    // Print original and expanded forms
-    println!("\nOriginal expressions:");
+    println!("\nMultiple outputs test:");
     for (expr, var) in builder.expressions() {
-      if let Variable::Aux(idx) = var {
-        println!("y_{} := {}", idx, expr);
+      match var {
+        Variable::Output(idx) => println!("Output   o_{} := {}", idx, builder.expand(expr)),
+        _ => println!("Other    {} := {}", var, builder.expand(expr)),
       }
     }
 
-    println!("\nExpanded expressions:");
+    // Verify we have the right number of outputs
+    assert_eq!(builder.output_count, 3);
+    assert_eq!(builder.aux_count, 0); // No auxiliary variables needed
+  }
+
+  #[test]
+  #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+  fn test_aux_to_output_conversion() {
+    let mut builder = CircuitBuilder::<F17>::new();
+
+    // Create a more complex computation that needs auxiliary variables
+    let x = builder.x(0);
+    let y = builder.w(0);
+
+    // Create some intermediate computations
+    let square = x.clone() * x.clone();
+    let aux1 = builder.add_internal(square); // y_0
+
+    let cube = aux1.clone() * x.clone();
+    let aux2 = builder.add_internal(cube); // y_1
+
+    // Now convert both to outputs
+    builder.mark_output(aux1); // Should become o_0
+    builder.mark_output(aux2); // Should become o_1
+
+    println!("\nAux to output conversion test:");
     for (expr, var) in builder.expressions() {
-      if let Variable::Aux(idx) = var {
-        println!("y_{} := {}", idx, builder.expand(expr));
+      match var {
+        Variable::Output(idx) => println!("Output   o_{} := {}", idx, builder.expand(expr)),
+        Variable::Aux(idx) => println!("Aux      y_{} := {}", idx, builder.expand(expr)),
+        _ => println!("Other    {} := {}", var, builder.expand(expr)),
       }
     }
+
+    // Verify our counts
+    assert_eq!(builder.output_count, 2);
+    assert_eq!(builder.aux_count, 0); // Both aux vars were converted
+  }
+
+  #[test]
+  #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+  fn test_mixed_aux_and_output() {
+    let mut builder = CircuitBuilder::<F17>::new();
+
+    let x = builder.x(0);
+    let y = builder.w(0);
+
+    // Create an auxiliary computation we'll keep as auxiliary
+    let square = x.clone() * x.clone();
+    let aux1 = builder.add_internal(square); // y_0
+
+    // Create an output directly
+    let direct_output = y.clone() * y.clone();
+    let o1 = builder.mark_output(direct_output); // o_0
+
+    // Create another auxiliary and convert it
+    let cube = aux1.clone() * x.clone();
+    let aux2 = builder.add_internal(cube); // y_1
+    builder.mark_output(aux2); // Converts to o_1
+
+    println!("\nMixed aux and output test:");
+    for (expr, var) in builder.expressions() {
+      match var {
+        Variable::Output(idx) => println!("Output   o_{} := {}", idx, builder.expand(expr)),
+        Variable::Aux(idx) => println!("Aux      y_{} := {}", idx, builder.expand(expr)),
+        _ => println!("Other    {} := {}", var, builder.expand(expr)),
+      }
+    }
+
+    // Verify final state
+    assert_eq!(builder.output_count, 2);
+    assert_eq!(builder.aux_count, 1); // aux1 remains as auxiliary
   }
 }

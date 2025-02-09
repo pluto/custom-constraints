@@ -5,6 +5,7 @@ use std::{
 
 use super::*;
 
+// TODO: Probably just combine values with their col indices
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct SparseMatrix<F> {
   row_offsets: Vec<usize>,

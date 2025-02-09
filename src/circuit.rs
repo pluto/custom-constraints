@@ -612,6 +612,7 @@ mod tests {
     }
   }
 
+  // TODO: looking at this more closely, I don't believe the aux `y_3` needs to exist
   #[test]
   #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
   fn test_complex_degree_reduction() {

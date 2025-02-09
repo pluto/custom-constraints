@@ -176,9 +176,12 @@ mod tests {
     println!("\nSetting up CCS for constraint x * y = z");
 
     // For z = (y, z, 1, x), create matrices:
-    let m1 = SparseMatrix::new_rows_cols(1, 4).write(0, 3, F17::ONE); // Select x
-    let m2 = SparseMatrix::new_rows_cols(1, 4).write(0, 0, F17::ONE); // Select y
-    let m3 = SparseMatrix::new_rows_cols(1, 4).write(0, 1, F17::ONE); // Select z
+    let mut m1 = SparseMatrix::new_rows_cols(1, 4);
+    m1.write(0, 3, F17::ONE); // Select x
+    let mut m2 = SparseMatrix::new_rows_cols(1, 4);
+    m2.write(0, 0, F17::ONE); // Select y
+    let mut m3 = SparseMatrix::new_rows_cols(1, 4);
+    m3.write(0, 1, F17::ONE); // Select z
 
     println!("Created matrices:");
     println!("M1 (selects x): {:?}", m1);

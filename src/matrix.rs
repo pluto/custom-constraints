@@ -29,7 +29,7 @@ impl<F: Field> SparseMatrix<F> {
     Self { row_offsets: vec![0; num_rows + 1], col_indices: vec![], values: vec![], num_cols }
   }
 
-  pub fn write(mut self, row: usize, col: usize, val: F) -> Self {
+  pub fn write(&mut self, row: usize, col: usize, val: F) {
     // Check bounds
     assert!(row < self.row_offsets.len() - 1, "Row index out of bounds");
     assert!(col < self.num_cols, "Column index out of bounds");
@@ -58,11 +58,9 @@ impl<F: Field> SparseMatrix<F> {
         self.row_offsets[i] += 1;
       }
     }
-
-    self
   }
 
-  fn remove(mut self, row: usize, col: usize) -> Self {
+  fn remove(&mut self, row: usize, col: usize) {
     // Get the range of indices for the current row
     let start = self.row_offsets[row];
     let end = self.row_offsets[row + 1];
@@ -80,8 +78,6 @@ impl<F: Field> SparseMatrix<F> {
         self.row_offsets[i] -= 1;
       }
     }
-
-    self
   }
 }
 
@@ -231,12 +227,12 @@ mod tests {
 
     let matrix = SparseMatrix::new(row_offsets, col_indices, values, 3);
 
-    let write_matrix = SparseMatrix::new_rows_cols(3, 3)
-      .write(0, 0, F17::from(2))
-      .write(0, 2, F17::ONE)
-      .write(1, 1, F17::from(3))
-      .write(2, 0, F17::from(4))
-      .write(2, 2, F17::from(5));
+    let mut write_matrix = SparseMatrix::new_rows_cols(3, 3);
+    write_matrix.write(0, 0, F17::from(2));
+    write_matrix.write(0, 2, F17::ONE);
+    write_matrix.write(1, 1, F17::from(3));
+    write_matrix.write(2, 0, F17::from(4));
+    write_matrix.write(2, 2, F17::from(5));
 
     assert_eq!(matrix, write_matrix);
   }
@@ -272,22 +268,22 @@ mod tests {
     // [2 0 1]
     // [0 3 0]
     // [4 0 5]
-    let test_matrix1 = SparseMatrix::new_rows_cols(3, 3)
-      .write(0, 0, F17::from(2))
-      .write(0, 2, F17::from(1))
-      .write(1, 1, F17::from(3))
-      .write(2, 0, F17::from(4))
-      .write(2, 2, F17::from(5));
+    let mut test_matrix1 = SparseMatrix::new_rows_cols(3, 3);
+    test_matrix1.write(0, 0, F17::from(2));
+    test_matrix1.write(0, 2, F17::from(1));
+    test_matrix1.write(1, 1, F17::from(3));
+    test_matrix1.write(2, 0, F17::from(4));
+    test_matrix1.write(2, 2, F17::from(5));
 
     // Matrix 2:
     // [3 0 0]
     // [0 2 1]
     // [0 0 2]
-    let test_matrix2 = SparseMatrix::new_rows_cols(3, 3)
-      .write(0, 0, F17::from(3))
-      .write(1, 1, F17::from(2))
-      .write(1, 2, F17::from(1))
-      .write(2, 2, F17::from(2));
+    let mut test_matrix2 = SparseMatrix::new_rows_cols(3, 3);
+    test_matrix2.write(0, 0, F17::from(3));
+    test_matrix2.write(1, 1, F17::from(2));
+    test_matrix2.write(1, 2, F17::from(1));
+    test_matrix2.write(2, 2, F17::from(2));
 
     // Perform Hadamard multiplication
     let result = &test_matrix1 * &test_matrix2;

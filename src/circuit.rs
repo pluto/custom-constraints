@@ -5,6 +5,8 @@ use std::{
 
 use ark_ff::Field;
 
+use crate::{ccs::CCS, matrix::SparseMatrix};
+
 // The CircuitBuilder struct remains unchanged from your implementation
 #[derive(Clone, Debug)]
 pub struct CircuitBuilder<F: Field> {
@@ -215,6 +217,52 @@ impl<F: Field> CircuitBuilder<F> {
         Expression::Add(reduced_terms)
       },
       _ => expr,
+    }
+  }
+
+  // Helper function to get position of a variable in z vector
+  fn get_z_position(&self, var: &Variable) -> usize {
+    match var {
+      // Public inputs start at position 1
+      Variable::Public(i) => 1 + i,
+      // Witness variables follow public inputs
+      Variable::Witness(i) => 1 + self.pub_inputs + i,
+      // Auxiliary variables follow witness variables
+      Variable::Aux(i) => 1 + self.pub_inputs + self.wit_inputs + i,
+      // Output variables follow auxiliary variables
+      Variable::Output(i) => 1 + self.pub_inputs + self.wit_inputs + self.aux_count + i,
+    }
+  }
+
+  pub fn into_ccs(self, d: usize) -> CCS<F> {
+    // First create the CCS with the right degree
+    let mut ccs = CCS::new_degree(d);
+
+    // Calculate total size of z vector
+    let z_len = 1 + self.pub_inputs + self.wit_inputs + self.aux_count + self.output_count;
+
+    // Initialize all matrices with the right dimensions
+    for matrix in ccs.matrices.iter_mut() {
+      *matrix = SparseMatrix::new_rows_cols(z_len, z_len);
+    }
+
+    // Process each expression in our circuit
+    for (expr, var) in self.expressions.iter() {
+      // Get the row index where this constraint should appear
+      let row_idx = self.get_z_position(var);
+
+      // Create constraint for this expression
+      //   self.create_constraint(&mut ccs, row_idx, expr, *var);
+    }
+    ccs
+  }
+
+  // Helper to get position of a value in expression
+  fn get_variable_position(&self, expr: &Expression<F>) -> usize {
+    match expr {
+      Expression::Variable(var) => self.get_z_position(var),
+      Expression::Constant(_) => 0,
+      _ => panic!("Expected a variable or constant"),
     }
   }
 }

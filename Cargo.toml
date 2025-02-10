@@ -11,8 +11,8 @@ version     = "0.1.0"
 
 [dependencies]
 ark-ff = { version = "0.5", default-features = false, features = [
-    "parallel",
-    "asm",
+  "parallel",
+  "asm",
 ] }
 rayon = { version = "1.10" }
 

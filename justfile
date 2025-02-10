@@ -123,7 +123,7 @@ build-wasm:
 # Run tests for native architecture and wasm
 test:
     @just header "Running native architecture tests"
-    cargo test --workspace --all-targets --all-features
+    cargo test --workspace --tests --all-features
     @just header "Running wasm tests"
     wasm-pack test --node
 

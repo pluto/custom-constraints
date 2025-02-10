@@ -1,107 +1,169 @@
-use std::{
-  collections::{HashMap, HashSet},
-  fmt::{self, Display, Formatter},
-  marker::PhantomData,
-};
+//! Circuit building and optimization for CCS.
+//!
+//! Provides a staged compilation pipeline:
+//! 1. Building: Initial circuit construction
+//! 2. DegreeConstrained: Circuit with enforced degree bounds
+//! 3. Optimized: Circuit after optimization passes
 
-use ark_ff::Field;
+use super::*;
+
+use std::{collections::HashMap, marker::PhantomData};
 
 use crate::{ccs::CCS, matrix::SparseMatrix};
 
 pub mod expression;
-#[cfg(test)] mod tests;
+#[cfg(test)]
+mod tests;
 
 use self::expression::*;
 
+/// State marker for initial circuit construction.
 #[derive(Debug)]
 pub struct Building;
 
+/// State marker for degree-constrained circuit.
 #[derive(Debug)]
 pub struct DegreeConstrained<const DEGREE: usize>;
 
+/// State marker for optimized circuit.
 #[derive(Debug)]
 pub struct Optimized<const DEGREE: usize>;
 
+/// Circuit state trait, implemented by state markers.
 pub trait CircuitState {}
 
 impl CircuitState for Building {}
 impl<const DEGREE: usize> CircuitState for DegreeConstrained<DEGREE> {}
 impl<const DEGREE: usize> CircuitState for Optimized<DEGREE> {}
 
-#[derive(Debug, Clone)]
+/// An arithmetic circuit with typed state transitions.
+#[derive(Debug, Clone, Default)]
 pub struct Circuit<S: CircuitState, F: Field> {
-  pub_inputs:   usize,
-  wit_inputs:   usize,
-  aux_count:    usize,
-  output_count: usize,
-  expressions:  Vec<(Expression<F>, Variable)>,
-  memo:         HashMap<String, Variable>,
-  _marker:      PhantomData<S>,
+  /// Number of public inputs
+  pub pub_inputs: usize,
+  /// Number of witness inputs  
+  pub wit_inputs: usize,
+  /// Number of auxiliary variables
+  pub aux_count: usize,
+  /// Number of output variables
+  pub output_count: usize,
+  /// Circuit expressions and their assigned variables
+  expressions: Vec<(Expression<F>, Variable)>,
+  /// Memoization cache for expressions
+  memo: HashMap<String, Variable>,
+  /// State type marker
+  _marker: PhantomData<S>,
 }
 
 impl<F: Field> Circuit<Building, F> {
+  /// Creates a new empty circuit.
   pub fn new() -> Self {
     Self {
-      pub_inputs:   0,
-      wit_inputs:   0,
-      aux_count:    0,
+      pub_inputs: 0,
+      wit_inputs: 0,
+      aux_count: 0,
       output_count: 0,
-      expressions:  Vec::new(),
-      memo:         HashMap::new(),
-      _marker:      PhantomData,
+      expressions: Vec::new(),
+      memo: HashMap::new(),
+      _marker: PhantomData,
     }
   }
 
+  /// Creates a public input variable x_i.
   pub fn x(&mut self, i: usize) -> Expression<F> {
     assert!(i <= self.pub_inputs);
     self.pub_inputs = self.pub_inputs.max(i + 1);
     Expression::Variable(Variable::Public(i))
   }
 
+  /// Creates a witness variable w_i.
   pub fn w(&mut self, i: usize) -> Expression<F> {
     assert!(i <= self.wit_inputs);
     self.wit_inputs = self.wit_inputs.max(i + 1);
     Expression::Variable(Variable::Witness(i))
   }
 
-  pub const fn constant(c: F) -> Expression<F> { Expression::Constant(c) }
+  /// Creates a constant expression.
+  pub const fn constant(c: F) -> Expression<F> {
+    Expression::Constant(c)
+  }
 
+  /// Adds an internal auxiliary variable.
   pub fn add_internal(&mut self, expr: Expression<F>) -> Expression<F> {
     self.get_or_create_aux(&expr)
   }
 
+  /// Marks an expression as a circuit output.
   pub fn mark_output(&mut self, expr: Expression<F>) -> Expression<F> {
-    match expr {
-      Expression::Variable(Variable::Aux(aux_idx)) => {
-        // Find and convert the specific auxiliary variable we want to change
-        for (_, var) in self.expressions.iter_mut() {
-          if *var == Variable::Aux(aux_idx) {
-            *var = Variable::Output(self.output_count);
-            break; // Found and converted the variable
-          }
+    if let Expression::Variable(Variable::Aux(aux_idx)) = expr {
+      // Find and convert the specific auxiliary variable we want to change
+      for (_, var) in &mut self.expressions {
+        if *var == Variable::Aux(aux_idx) {
+          *var = Variable::Output(self.output_count);
+          break; // Found and converted the variable
         }
-        let output_idx = self.output_count;
-        self.output_count += 1;
-        self.aux_count -= 1; // Decrease aux count since we converted one
-        Expression::Variable(Variable::Output(output_idx))
-      },
-      _ => {
-        // For other expressions, create a new output variable
-        let output_idx = self.output_count;
-        let var = Variable::Output(output_idx);
-        self.output_count += 1;
-        self.expressions.push((expr, var));
-        Expression::Variable(var)
-      },
+      }
+      let output_idx = self.output_count;
+      self.output_count += 1;
+      self.aux_count -= 1; // Decrease aux count since we converted one
+      Expression::Variable(Variable::Output(output_idx))
+    } else {
+      // For other expressions, create a new output variable
+      let output_idx = self.output_count;
+      let var = Variable::Output(output_idx);
+      self.output_count += 1;
+      self.expressions.push((expr, var));
+      Expression::Variable(var)
     }
   }
 
+  // TODO: Remove clone
+  /// Transitions circuit to degree-constrained state.
+  pub fn fix_degree<const D: usize>(mut self) -> Circuit<DegreeConstrained<D>, F> {
+    // First, collect all expressions we need to process
+    let expressions_to_process: Vec<_> = self.expressions.clone();
+
+    // Clear existing expressions since we'll rebuild them
+    self.expressions.clear();
+
+    // Process non-output expressions first
+    for (expr, var) in &expressions_to_process {
+      if let Variable::Output(_) = var {
+        continue;
+      }
+      let reduced = self.reduce_degree(expr.clone(), D);
+      self.expressions.push((reduced, *var));
+    }
+
+    // Now handle output expressions
+    for (expr, var) in &expressions_to_process {
+      if let Variable::Output(_) = var {
+        let reduced = self.reduce_degree(expr.clone(), D);
+        self.expressions.push((reduced, *var));
+      }
+    }
+
+    Circuit {
+      pub_inputs: self.pub_inputs,
+      wit_inputs: self.wit_inputs,
+      aux_count: self.aux_count,
+      output_count: self.output_count,
+      expressions: self.expressions,
+      memo: self.memo,
+      _marker: PhantomData,
+    }
+  }
+
+  /// Creates a new auxiliary variable and increments the counter.
   const fn new_aux(&mut self) -> Variable {
     let var = Variable::Aux(self.aux_count);
     self.aux_count += 1;
     var
   }
 
+  /// Returns existing auxiliary variable for expression or creates new one.
+  ///
+  /// Used for memoization/common subexpression elimination.
   fn get_or_create_aux(&mut self, expr: &Expression<F>) -> Expression<F> {
     // Create a string representation of the expression for memoization
     let expr_key = format!("{expr}");
@@ -118,8 +180,12 @@ impl<F: Field> Circuit<Building, F> {
     }
   }
 
-  /// Reduces an expression to have maximum degree d by introducing auxiliary variables
-  pub fn reduce_degree(&mut self, expr: Expression<F>, d: usize) -> Expression<F> {
+  /// Reduces expression degree through auxiliary variable introduction.
+  ///
+  /// # Arguments
+  /// * `expr` - Expression to reduce
+  /// * `d` - Target degree bound
+  fn reduce_degree(&mut self, expr: Expression<F>, d: usize) -> Expression<F> {
     let current_degree = compute_degree(&expr);
     if current_degree <= d {
       return expr;
@@ -134,17 +200,14 @@ impl<F: Field> Circuit<Building, F> {
         for factor in factors {
           let factor_degree = compute_degree(&factor);
 
-          if current_group_degree + factor_degree > d {
-            if !current_group.is_empty() {
-              let group_expr = if current_group.len() == 1 {
-                current_group.pop().unwrap()
-              } else {
-                Expression::Mul(current_group.drain(..).collect())
-              };
-              // Use get_or_create_aux instead of directly adding
-              reduced_factors.push(self.get_or_create_aux(&group_expr));
-              current_group_degree = 0;
-            }
+          if current_group_degree + factor_degree > d && !current_group.is_empty() {
+            let group_expr = if current_group.len() == 1 {
+              current_group.pop().unwrap()
+            } else {
+              Expression::Mul(std::mem::take(&mut current_group))
+            };
+            reduced_factors.push(self.get_or_create_aux(&group_expr));
+            current_group_degree = 0;
           }
 
           let reduced_factor = self.reduce_degree(factor, d);
@@ -177,49 +240,10 @@ impl<F: Field> Circuit<Building, F> {
       _ => expr,
     }
   }
-
-  // TODO: Remove clone
-  // New method to transition to DegreeConstrained state
-  pub fn fix_degree<const D: usize>(mut self) -> Circuit<DegreeConstrained<D>, F> {
-    // First, collect all expressions we need to process
-    let expressions_to_process: Vec<_> = self.expressions.clone();
-
-    // Clear existing expressions since we'll rebuild them
-    self.expressions.clear();
-
-    // Process non-output expressions first
-    for (expr, var) in expressions_to_process.iter() {
-      match var {
-        Variable::Output(_) => continue, // Handle outputs in second pass
-        _ => {
-          let reduced = self.reduce_degree(expr.clone(), D);
-          self.expressions.push((reduced, *var));
-        },
-      }
-    }
-
-    // Now handle output expressions
-    for (expr, var) in expressions_to_process.iter() {
-      if let Variable::Output(_) = var {
-        let reduced = self.reduce_degree(expr.clone(), D);
-        self.expressions.push((reduced, *var));
-      }
-    }
-
-    // Create the new degree-constrained circuit
-    Circuit {
-      pub_inputs:   self.pub_inputs,
-      wit_inputs:   self.wit_inputs,
-      aux_count:    self.aux_count,
-      output_count: self.output_count,
-      expressions:  self.expressions,
-      memo:         self.memo,
-      _marker:      PhantomData,
-    }
-  }
 }
 
 impl<const D: usize, F: Field> Circuit<DegreeConstrained<D>, F> {
+  /// Converts circuit to CCS format.
   pub fn into_ccs(self) -> CCS<F> {
     let mut ccs = CCS::new_degree(D);
 
@@ -240,7 +264,14 @@ impl<const D: usize, F: Field> Circuit<DegreeConstrained<D>, F> {
     ccs
   }
 
-  // Modified create_constraint to handle generic degree
+  /// Creates constraint for an expression at specified row.
+  ///
+  /// # Arguments
+  /// * `ccs` - Target CCS
+  /// * `d` - Maximum degree
+  /// * `row` - Row index for constraint
+  /// * `expr` - Expression to constrain
+  /// * `output` - Output variable
   fn create_constraint(
     &self,
     ccs: &mut CCS<F>,
@@ -254,15 +285,16 @@ impl<const D: usize, F: Field> Circuit<DegreeConstrained<D>, F> {
     ccs.matrices.last_mut().unwrap().write(row, output_pos, -F::ONE);
 
     match expr {
-      Expression::Add(terms) =>
+      Expression::Add(terms) => {
         for term in terms {
           self.process_term(ccs, d, row, term);
-        },
+        }
+      },
       _ => self.process_term(ccs, d, row, expr),
     }
   }
 
-  // Generic process_term that handles any degree up to d
+  /// Processes term in constraint creation.
   fn process_term(&self, ccs: &mut CCS<F>, d: usize, row: usize, term: &Expression<F>) {
     // First, fully expand the expression
     let expanded = expand_expression(term);
@@ -278,6 +310,7 @@ impl<const D: usize, F: Field> Circuit<DegreeConstrained<D>, F> {
     }
   }
 
+  /// Processes a simple (non-compound) term.
   fn process_simple_term(&self, ccs: &mut CCS<F>, d: usize, row: usize, term: &Expression<F>) {
     match term {
       Expression::Mul(factors) => {
@@ -287,7 +320,7 @@ impl<const D: usize, F: Field> Circuit<DegreeConstrained<D>, F> {
 
         for factor in factors {
           match factor {
-            Expression::Constant(c) => coefficient = coefficient * *c,
+            Expression::Constant(c) => coefficient *= *c,
             Expression::Variable(_) => var_factors.push(factor),
             _ => panic!("Unexpected non-simple factor after expansion"),
           }
@@ -323,10 +356,11 @@ impl<const D: usize, F: Field> Circuit<DegreeConstrained<D>, F> {
         // Single constant goes in last matrix
         ccs.matrices.last_mut().unwrap().write(row, 0, *c);
       },
-      _ => panic!("Unexpected complex term after expansion"),
+      Expression::Add(_) => panic!("Unexpected complex term after expansion"),
     }
   }
 
+  /// Optimizes the circuit by eliminating auxiliary variables less than degree `D`
   pub fn optimize(self) -> Circuit<Optimized<D>, F> {
     println!("\nStarting optimization process...");
 
@@ -454,17 +488,18 @@ impl<const D: usize, F: Field> Circuit<DegreeConstrained<D>, F> {
 
     // Convert to optimized circuit
     Circuit {
-      pub_inputs:   new_circuit.pub_inputs,
-      wit_inputs:   new_circuit.wit_inputs,
-      aux_count:    new_circuit.aux_count,
+      pub_inputs: new_circuit.pub_inputs,
+      wit_inputs: new_circuit.wit_inputs,
+      aux_count: new_circuit.aux_count,
       output_count: new_circuit.output_count,
-      expressions:  new_circuit.expressions,
-      memo:         new_circuit.memo,
-      _marker:      PhantomData,
+      expressions: new_circuit.expressions,
+      memo: new_circuit.memo,
+      _marker: PhantomData,
     }
   }
 }
 
+/// Expands expressions by distributing multiplication over addition.
 fn expand_expression<F: Field>(expr: &Expression<F>) -> Expression<F> {
   match expr {
     Expression::Mul(factors) => {
@@ -488,6 +523,7 @@ fn expand_expression<F: Field>(expr: &Expression<F>) -> Expression<F> {
   }
 }
 
+/// Multiplies two expressions with distribution.
 fn multiply_expressions<F: Field>(a: &Expression<F>, b: &Expression<F>) -> Expression<F> {
   match (a, b) {
     (Expression::Add(terms_a), _) => {
@@ -516,37 +552,8 @@ fn multiply_expressions<F: Field>(a: &Expression<F>, b: &Expression<F>) -> Expre
   }
 }
 
-fn distribute_multiplication<F: Field>(factors: &[Expression<F>]) -> Expression<F> {
-  // Find the first addition factor
-  if let Some((add_idx, add_expr)) =
-    factors.iter().enumerate().find(|(_, f)| matches!(f, Expression::Add(_)))
-  {
-    if let Expression::Add(terms) = add_expr {
-      // Multiply each term in the addition by all other factors
-      let distributed_terms: Vec<_> = terms
-        .iter()
-        .map(|term| {
-          let mut new_factors = Vec::new();
-          for (i, factor) in factors.iter().enumerate() {
-            if i == add_idx {
-              new_factors.push(term.clone());
-            } else {
-              new_factors.push(factor.clone());
-            }
-          }
-          Expression::Mul(new_factors)
-        })
-        .collect();
-      Expression::Add(distributed_terms)
-    } else {
-      unreachable!()
-    }
-  } else {
-    Expression::Mul(factors.to_vec())
-  }
-}
-
 impl<const D: usize, F: Field> Circuit<Optimized<D>, F> {
+  /// Converts and `Optimized` circuit into CCS.
   pub fn into_ccs(self) -> CCS<F> {
     let mut ccs = CCS::new_degree(D);
 
@@ -567,7 +574,7 @@ impl<const D: usize, F: Field> Circuit<Optimized<D>, F> {
     ccs
   }
 
-  // Modified create_constraint to handle generic degree
+  /// Creates a constraint in the constraint system
   fn create_constraint(
     &self,
     ccs: &mut CCS<F>,
@@ -581,15 +588,16 @@ impl<const D: usize, F: Field> Circuit<Optimized<D>, F> {
     ccs.matrices.last_mut().unwrap().write(row, output_pos, -F::ONE);
 
     match expr {
-      Expression::Add(terms) =>
+      Expression::Add(terms) => {
         for term in terms {
           self.process_term(ccs, d, row, term);
-        },
+        }
+      },
       _ => self.process_term(ccs, d, row, expr),
     }
   }
 
-  // Generic process_term that handles any degree up to d
+  /// Processes term in constraint creation.
   fn process_term(&self, ccs: &mut CCS<F>, d: usize, row: usize, term: &Expression<F>) {
     match term {
       Expression::Mul(factors) => {
@@ -655,42 +663,44 @@ impl<const D: usize, F: Field> Circuit<Optimized<D>, F> {
 }
 
 impl<S: CircuitState, F: Field> Circuit<S, F> {
-  pub fn expressions(&self) -> &[(Expression<F>, Variable)] { &self.expressions }
+  /// Returns circuit expressions.
+  pub fn expressions(&self) -> &[(Expression<F>, Variable)] {
+    &self.expressions
+  }
 
   // TODO: Should this really only be some kind of `#[cfg(test)]` fn?
+  /// Expands an expression by substituting definitions.
   pub fn expand(&self, expr: &Expression<F>) -> Expression<F> {
     match expr {
       // Base cases: constants and input variables remain unchanged
       Expression::Constant(_)
-      | Expression::Variable(Variable::Public(_))
-      | Expression::Variable(Variable::Witness(_)) => expr.clone(),
+      | Expression::Variable(Variable::Public(_) | Variable::Witness(_)) => expr.clone(),
 
       // For auxiliary and output variables, look up their definition
       Expression::Variable(var @ (Variable::Aux(_) | Variable::Output(_))) => {
-        if let Some(definition) = self.get_definition(var) {
-          self.expand(definition)
-        } else {
-          expr.clone()
-        }
+        self.get_definition(var).map_or_else(|| expr.clone(), |definition| self.expand(definition))
       },
 
-      // Recursively expand all subexpressions
-      Expression::Add(terms) =>
-        Expression::Add(terms.iter().map(|term| self.expand(term)).collect()),
-      Expression::Mul(factors) =>
-        Expression::Mul(factors.iter().map(|factor| self.expand(factor)).collect()),
+      Expression::Add(terms) => {
+        Expression::Add(terms.iter().map(|term| self.expand(term)).collect())
+      },
+      Expression::Mul(factors) => {
+        Expression::Mul(factors.iter().map(|factor| self.expand(factor)).collect())
+      },
     }
   }
 
+  /// Gets definition for a variable if it exists.
   fn get_definition(&self, var: &Variable) -> Option<&Expression<F>> {
     match var {
-      Variable::Aux(idx) | Variable::Output(idx) =>
-        self.expressions.get(*idx).map(|(expr, _)| expr),
+      Variable::Aux(idx) | Variable::Output(idx) => {
+        self.expressions.get(*idx).map(|(expr, _)| expr)
+      },
       _ => None,
     }
   }
 
-  // Helper function to get position of a variable in z vector
+  /// Gets position of variable in z vector.
   fn get_z_position(&self, var: &Variable) -> usize {
     match var {
       // Public inputs start at position 1
@@ -704,7 +714,7 @@ impl<S: CircuitState, F: Field> Circuit<S, F> {
     }
   }
 
-  // Helper to get position of a variable in z vector
+  /// Gets position of expression in z vector.
   fn get_variable_position(&self, expr: &Expression<F>) -> usize {
     match expr {
       Expression::Variable(var) => self.get_z_position(var),
@@ -723,6 +733,7 @@ impl<S: CircuitState, F: Field> Circuit<S, F> {
   }
 }
 
+/// Computes the degree of an expression.
 fn compute_degree<F: Field>(expr: &Expression<F>) -> usize {
   match expr {
     // Constants are degree 0

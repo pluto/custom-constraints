@@ -1,12 +1,12 @@
 // TODO: all these tests really need to check things more strictly
 use super::*;
-use crate::mock::F17;
 
 #[test]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
 fn test_compute_degree_base_cases() {
   // Constants and variables should have degree 1
   let constant = Expression::Constant(F17::from(5));
-  assert_eq!(compute_degree(&constant), 1, "Constants should have degree 1");
+  assert_eq!(compute_degree(&constant), 0, "Constants should have degree 0");
 
   let public = Expression::<F17>::Variable(Variable::Public(0));
   assert_eq!(compute_degree(&public), 1, "Public variables should have degree 1");
@@ -19,6 +19,7 @@ fn test_compute_degree_base_cases() {
 }
 
 #[test]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
 fn test_compute_degree_addition() {
   // Addition should take the maximum degree of its terms
   let x = Expression::<F17>::Variable(Variable::Public(0));
@@ -40,6 +41,7 @@ fn test_compute_degree_addition() {
 }
 
 #[test]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
 fn test_compute_degree_multiplication() {
   // Multiplication should sum the degrees of its factors
   let x = Expression::<F17>::Variable(Variable::Public(0));
@@ -60,6 +62,7 @@ fn test_compute_degree_multiplication() {
 }
 
 #[test]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
 fn test_compute_degree_complex_expressions() {
   let x = Expression::<F17>::Variable(Variable::Public(0));
   let y = Expression::Variable(Variable::Witness(0));
@@ -134,11 +137,11 @@ fn test_multiple_outputs() {
 
   // Second output: y * z
   let mul2 = y * z;
-  let o2 = builder.mark_output(mul2); // This should become o_1
+  let _o2 = builder.mark_output(mul2); // This should become o_1
 
   // Third output: x * o1 (using a previous output)
   let mul3 = x * o1;
-  let o3 = builder.mark_output(mul3); // This should become o_2
+  let _o3 = builder.mark_output(mul3); // This should become o_2
 
   println!("\nMultiple outputs test:");
   for (expr, var) in builder.expressions() {
@@ -160,13 +163,13 @@ fn test_aux_to_output_conversion() {
 
   // Create a more complex computation that needs auxiliary variables
   let x = builder.x(0);
-  let y = builder.w(0);
+  let _y = builder.w(0);
 
   // Create some intermediate computations
   let square = x.clone() * x.clone();
   let aux1 = builder.add_internal(square); // y_0
 
-  let cube = aux1.clone() * x.clone();
+  let cube = aux1.clone() * x;
   let aux2 = builder.add_internal(cube); // y_1
 
   // Now convert both to outputs
@@ -200,11 +203,11 @@ fn test_mixed_aux_and_output() {
   let aux1 = builder.add_internal(square); // y_0
 
   // Create an output directly
-  let direct_output = y.clone() * y.clone();
-  let o1 = builder.mark_output(direct_output); // o_0
+  let direct_output = y.clone() * y;
+  let _o1 = builder.mark_output(direct_output); // o_0
 
   // Create another auxiliary and convert it
-  let cube = aux1.clone() * x.clone();
+  let cube = aux1 * x;
   let aux2 = builder.add_internal(cube); // y_1
   builder.mark_output(aux2); // Converts to o_1
 
@@ -237,10 +240,10 @@ fn test_reduce_degree() {
   // Reduce to degree 2
   let reduced = builder.reduce_degree(expr, 2);
 
-  println!("Reduced expression: {}", reduced);
+  println!("Reduced expression: {reduced}");
   println!("\nAuxiliary variables:");
   for (expr, var) in builder.expressions() {
-    println!("{} := {}", var, expr);
+    println!("{var} := {expr}");
   }
 }
 
@@ -255,11 +258,11 @@ fn test_complex_degree_reduction() {
 
   let x_cubed = x.clone() * x.clone() * x.clone();
   let y_squared = y.clone() * y.clone();
-  let common_term = x_cubed.clone() + y_squared.clone();
+  let common_term = x_cubed + y_squared.clone();
 
   // Build P1: (x^3 + y^2)^2 * (x + y)
   let common_term_squared = common_term.clone() * common_term.clone();
-  let x_plus_y = x.clone() + y.clone();
+  let x_plus_y = x.clone() + y;
   let p1 = common_term_squared.clone() * x_plus_y;
 
   // Build P2: x * y^4 + (x^3 + y^2)^3

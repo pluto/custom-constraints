@@ -1,20 +1,29 @@
-use std::{
-  fmt::{self, Display, Formatter},
-  ops::Mul,
-};
+//! Provides a Compressed Sparse Row (CSR) matrix implementation optimized for efficient operations.
+//!
+//! The [`SparseMatrix`] type is designed to handle sparse matrices efficiently by storing only
+//! non-zero elements in a compressed format. It supports matrix-vector multiplication and
+//! element-wise (Hadamard) matrix multiplication.
+
+use std::ops::Mul;
 
 use super::*;
 
 // TODO: Probably just combine values with their col indices
+/// A sparse matrix implementation using the Compressed Sparse Row (CSR) format.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct SparseMatrix<F> {
+  /// Offsets into col_indices/values for the start of each row
   row_offsets: Vec<usize>,
+  /// Column indices of non-zero elements
   col_indices: Vec<usize>,
-  values:      Vec<F>,
-  num_cols:    usize,
+  /// Values of non-zero elements
+  values: Vec<F>,
+  /// Number of columns in the matrix
+  num_cols: usize,
 }
 
 impl<F: Field> SparseMatrix<F> {
+  /// Creates a new sparse matrix from its CSR components.
   pub fn new(
     row_offsets: Vec<usize>,
     col_indices: Vec<usize>,
@@ -25,10 +34,16 @@ impl<F: Field> SparseMatrix<F> {
     Self { row_offsets, col_indices, values, num_cols }
   }
 
+  /// Creates an empty sparse matrix with the specified dimensions.
   pub fn new_rows_cols(num_rows: usize, num_cols: usize) -> SparseMatrix<F> {
     Self { row_offsets: vec![0; num_rows + 1], col_indices: vec![], values: vec![], num_cols }
   }
 
+  /// Writes a value to the specified position in the matrix.
+  ///
+  /// # Panics
+  /// - If row or column indices are out of bounds
+  /// - If attempting to write a zero value
   pub fn write(&mut self, row: usize, col: usize, val: F) {
     // Check bounds
     assert!(row < self.row_offsets.len() - 1, "Row index out of bounds");
@@ -40,10 +55,8 @@ impl<F: Field> SparseMatrix<F> {
     let end = self.row_offsets[row + 1];
 
     // Search for the column index in the current row
-    let pos = self.col_indices[start..end]
-      .binary_search(&col)
-      .map(|i| start + i)
-      .unwrap_or_else(|i| start + i);
+    let pos =
+      self.col_indices[start..end].binary_search(&col).map_or_else(|i| start + i, |i| start + i);
 
     if pos < end && self.col_indices[pos] == col {
       // Overwrite existing value
@@ -60,6 +73,8 @@ impl<F: Field> SparseMatrix<F> {
     }
   }
 
+  #[allow(unused)]
+  /// Removes an entry from the [`SparseMatrix`]
   fn remove(&mut self, row: usize, col: usize) {
     // Get the range of indices for the current row
     let start = self.row_offsets[row];
@@ -84,11 +99,16 @@ impl<F: Field> SparseMatrix<F> {
 impl<F: Field> Mul<&Vec<F>> for &SparseMatrix<F> {
   type Output = Vec<F>;
 
+  /// Performs matrix-vector multiplication.
+  ///
+  /// # Panics
+  /// If the vector length doesn't match the matrix column count.
   fn mul(self, rhs: &Vec<F>) -> Self::Output {
     // TODO: Make error
     assert_eq!(rhs.len(), self.num_cols, "Invalid vector length");
     let mut result = vec![F::ZERO; self.row_offsets.len() - 1];
 
+    #[allow(clippy::needless_range_loop)]
     for row in 0..self.row_offsets.len() - 1 {
       let start = self.row_offsets[row];
       let end = self.row_offsets[row + 1];
@@ -107,6 +127,10 @@ impl<F: Field> Mul<&Vec<F>> for &SparseMatrix<F> {
 impl<F: Field> Mul<&SparseMatrix<F>> for &SparseMatrix<F> {
   type Output = SparseMatrix<F>;
 
+  /// Performs element-wise (Hadamard) matrix multiplication.
+  ///
+  /// # Panics
+  /// If matrix dimensions don't match.
   fn mul(self, rhs: &SparseMatrix<F>) -> Self::Output {
     // We'll implement elementwise multiplication but first check dimensions match
     assert_eq!(self.num_cols, rhs.num_cols, "Matrices must have same dimensions");
@@ -292,11 +316,14 @@ mod tests {
     // [6 0 0]
     // [0 6 0]
     // [0 0 10]
-    assert_eq!(result.values, [
-      F17::from(6),  // 2*3 at (0,0)
-      F17::from(6),  // 3*2 at (1,1)
-      F17::from(10), // 5*2 at (2,2)
-    ]);
+    assert_eq!(
+      result.values,
+      [
+        F17::from(6),  // 2*3 at (0,0)
+        F17::from(6),  // 3*2 at (1,1)
+        F17::from(10), // 5*2 at (2,2)
+      ]
+    );
     assert_eq!(result.col_indices, [0, 1, 2]);
     assert_eq!(result.row_offsets, [0, 1, 2, 3]);
   }

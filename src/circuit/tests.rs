@@ -244,11 +244,6 @@ fn test_reduce_degree() {
   }
 }
 
-// TODO: looking at this more closely, I don't believe the aux `y_3` needs to exist. How we can
-// check this is to see if that variable is ever used elsewhere. So we need some optimizer step
-// that depends on degrees. In other words, it's like row reduction, but we can remove whole rows
-// from every matrix. Also, y1 should not exist. There should be no aux variables that are degree
-// < 3 ever as it means we could have packed them better.
 #[test]
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
 fn test_complex_degree_reduction() {
@@ -304,4 +299,37 @@ fn test_complex_degree_reduction() {
   let optimized_circuit = deg_3_circuit.optimize();
   let ccs = optimized_circuit.into_ccs();
   println!("\nFinal CCS:\n{}", ccs);
+}
+
+// TODO: This test can show that if we run the optimzer, we may unjustifiably kill off constraints.
+// So we need to rethink what optimization means in this case.
+#[test]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+fn test_raw_low_degree_constraint_not_removed() {
+  let mut builder = Circuit::<_, F17>::new();
+
+  // Create inputs and build expressions (same as before)
+  let x = builder.x(0);
+  let y = builder.w(0);
+
+  // Enforce x is a bool
+  let bool = x.clone() * (Expression::Constant(F17::from(1)) - x.clone());
+  let toggle = x * y + Expression::Constant(F17::ONE);
+
+  builder.add_internal(bool);
+  builder.add_internal(toggle);
+
+  let fixed = builder.fix_degree::<3>();
+  // Verify degrees after fixing
+
+  println!("\nDegree-constrained expressions:");
+  for (expr, var) in fixed.expressions() {
+    let degree = compute_degree(expr);
+    println!("{} := {} (degree {})", var, expr, degree);
+    assert!(degree <= 3, "Expression {} exceeds degree bound", var);
+  }
+
+  let ccs = fixed.into_ccs();
+
+  println!("CCS: {ccs}");
 }

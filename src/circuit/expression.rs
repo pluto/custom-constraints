@@ -8,7 +8,7 @@ pub enum Variable {
   Output(usize),
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub enum Expression<F: Field> {
   Variable(Variable),
   Constant(F),

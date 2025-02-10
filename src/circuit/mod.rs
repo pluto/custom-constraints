@@ -220,6 +220,113 @@ impl<F: Field> Circuit<Building, F> {
 }
 
 impl<const D: usize, F: Field> Circuit<DegreeConstrained<D>, F> {
+  pub fn into_ccs(self) -> CCS<F> {
+    let mut ccs = CCS::new_degree(D);
+
+    // Calculate dimensions
+    let num_cols = 1 + self.pub_inputs + self.wit_inputs + self.aux_count + self.output_count;
+
+    // Initialize matrices
+    for matrix in &mut ccs.matrices {
+      *matrix = SparseMatrix::new_rows_cols(num_cols, num_cols);
+    }
+
+    // Process expressions with a more generic approach
+    for (expr, var) in &self.expressions {
+      let row = self.get_z_position(var);
+      self.create_constraint(&mut ccs, D, row, expr, var);
+    }
+
+    ccs
+  }
+
+  // Modified create_constraint to handle generic degree
+  fn create_constraint(
+    &self,
+    ccs: &mut CCS<F>,
+    d: usize,
+    row: usize,
+    expr: &Expression<F>,
+    output: &Variable,
+  ) {
+    // Write -1 times the output variable to the last matrix
+    let output_pos = self.get_z_position(output);
+    ccs.matrices.last_mut().unwrap().write(row, output_pos, -F::ONE);
+
+    match expr {
+      Expression::Add(terms) =>
+        for term in terms {
+          self.process_term(ccs, d, row, term);
+        },
+      _ => self.process_term(ccs, d, row, expr),
+    }
+  }
+
+  // Generic process_term that handles any degree up to d
+  fn process_term(&self, ccs: &mut CCS<F>, d: usize, row: usize, term: &Expression<F>) {
+    // First, fully expand the expression
+    let expanded = expand_expression(term);
+
+    match expanded {
+      Expression::Add(terms) => {
+        // Process each term in the addition
+        for term in terms {
+          self.process_simple_term(ccs, d, row, &term);
+        }
+      },
+      _ => self.process_simple_term(ccs, d, row, &expanded),
+    }
+  }
+
+  fn process_simple_term(&self, ccs: &mut CCS<F>, d: usize, row: usize, term: &Expression<F>) {
+    match term {
+      Expression::Mul(factors) => {
+        // Collect constants and variables
+        let mut coefficient = F::ONE;
+        let mut var_factors: Vec<_> = Vec::new();
+
+        for factor in factors {
+          match factor {
+            Expression::Constant(c) => coefficient = coefficient * *c,
+            Expression::Variable(_) => var_factors.push(factor),
+            _ => panic!("Unexpected non-simple factor after expansion"),
+          }
+        }
+
+        let degree = var_factors.len();
+        assert!(degree <= d, "Term degree exceeds maximum");
+
+        if degree == 0 {
+          // Pure constant term goes in last matrix
+          ccs.matrices.last_mut().unwrap().write(row, 0, coefficient);
+        } else {
+          // Calculate starting matrix index based on variable factors only
+          let start_idx = if degree == d { 0 } else { (degree + 1..=d).sum() };
+
+          // Write variable factors with coefficient on first one
+          for (i, factor) in var_factors.iter().enumerate() {
+            let pos = self.get_variable_position(factor);
+            if i == 0 {
+              ccs.matrices[start_idx + i].write(row, pos, coefficient);
+            } else {
+              ccs.matrices[start_idx + i].write(row, pos, F::ONE);
+            }
+          }
+        }
+      },
+      Expression::Variable(_) => {
+        // Single variable goes in last matrix
+        let pos = self.get_variable_position(term);
+        ccs.matrices.last_mut().unwrap().write(row, pos, F::ONE);
+      },
+      Expression::Constant(c) => {
+        // Single constant goes in last matrix
+        ccs.matrices.last_mut().unwrap().write(row, 0, *c);
+      },
+      _ => panic!("Unexpected complex term after expansion"),
+    }
+  }
+
   pub fn optimize(self) -> Circuit<Optimized<D>, F> {
     println!("\nStarting optimization process...");
 
@@ -355,6 +462,87 @@ impl<const D: usize, F: Field> Circuit<DegreeConstrained<D>, F> {
       memo:         new_circuit.memo,
       _marker:      PhantomData,
     }
+  }
+}
+
+fn expand_expression<F: Field>(expr: &Expression<F>) -> Expression<F> {
+  match expr {
+    Expression::Mul(factors) => {
+      // First expand each factor
+      let expanded_factors: Vec<_> = factors.iter().map(|f| expand_expression(f)).collect();
+
+      // If any factor is an addition, we need to distribute
+      let mut result = expanded_factors[0].clone();
+      for factor in expanded_factors.iter().skip(1) {
+        result = multiply_expressions(&result, factor);
+      }
+      result
+    },
+    Expression::Add(terms) => {
+      // Expand each term and combine
+      let expanded_terms: Vec<_> = terms.iter().map(|t| expand_expression(t)).collect();
+      Expression::Add(expanded_terms)
+    },
+    // Variables and constants stay as they are
+    _ => expr.clone(),
+  }
+}
+
+fn multiply_expressions<F: Field>(a: &Expression<F>, b: &Expression<F>) -> Expression<F> {
+  match (a, b) {
+    (Expression::Add(terms_a), _) => {
+      // Distribute multiplication over addition
+      let distributed: Vec<_> = terms_a.iter().map(|term| multiply_expressions(term, b)).collect();
+      Expression::Add(distributed)
+    },
+    (_, Expression::Add(terms_b)) => {
+      // Distribute multiplication over addition
+      let distributed: Vec<_> = terms_b.iter().map(|term| multiply_expressions(a, term)).collect();
+      Expression::Add(distributed)
+    },
+    (Expression::Mul(factors_a), Expression::Mul(factors_b)) => {
+      // Combine the factors
+      let mut new_factors = factors_a.clone();
+      new_factors.extend(factors_b.clone());
+      Expression::Mul(new_factors)
+    },
+    (Expression::Mul(factors), b) | (b, Expression::Mul(factors)) => {
+      // Add the new factor to the existing ones
+      let mut new_factors = factors.clone();
+      new_factors.push(b.clone());
+      Expression::Mul(new_factors)
+    },
+    (a, b) => Expression::Mul(vec![a.clone(), b.clone()]),
+  }
+}
+
+fn distribute_multiplication<F: Field>(factors: &[Expression<F>]) -> Expression<F> {
+  // Find the first addition factor
+  if let Some((add_idx, add_expr)) =
+    factors.iter().enumerate().find(|(_, f)| matches!(f, Expression::Add(_)))
+  {
+    if let Expression::Add(terms) = add_expr {
+      // Multiply each term in the addition by all other factors
+      let distributed_terms: Vec<_> = terms
+        .iter()
+        .map(|term| {
+          let mut new_factors = Vec::new();
+          for (i, factor) in factors.iter().enumerate() {
+            if i == add_idx {
+              new_factors.push(term.clone());
+            } else {
+              new_factors.push(factor.clone());
+            }
+          }
+          Expression::Mul(new_factors)
+        })
+        .collect();
+      Expression::Add(distributed_terms)
+    } else {
+      unreachable!()
+    }
+  } else {
+    Expression::Mul(factors.to_vec())
   }
 }
 
@@ -537,8 +725,10 @@ impl<S: CircuitState, F: Field> Circuit<S, F> {
 
 fn compute_degree<F: Field>(expr: &Expression<F>) -> usize {
   match expr {
-    // Base cases: variables and constants have degree 1
-    Expression::Variable(_) | Expression::Constant(_) => 1,
+    // Constants are degree 0
+    Expression::Constant(_) => 0,
+    // Base cases: variables degree 1
+    Expression::Variable(_) => 1,
 
     // For addition, take the maximum degree of any term
     Expression::Add(terms) => terms.iter().map(|term| compute_degree(term)).max().unwrap_or(0),

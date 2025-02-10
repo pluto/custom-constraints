@@ -31,6 +31,7 @@ mod mock {
   //! Test utilities including a simple finite field implementation.
   use ark_ff::{Fp, MontBackend, MontConfig};
 
+  #[allow(unexpected_cfgs)]
   #[derive(MontConfig)]
   #[modulus = "17"]
   #[generator = "3"]

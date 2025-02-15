@@ -1,29 +1,6 @@
-//! Implements the Customizable Constraint System (CCS) format.
-//!
-//! A CCS represents arithmetic constraints through a combination of matrices
-//! and multisets, allowing efficient verification of arithmetic computations.
-//!
-//! The system consists of:
-//! - A set of sparse matrices representing linear combinations
-//! - Multisets defining which matrices participate in each constraint
-//! - Constants applied to each constraint term
-
-use matrix::SparseMatrix;
-
 use super::*;
 
-/// A Customizable Constraint System over a field F.
-#[derive(Debug, Default)]
-pub struct CCS<F: Field> {
-  /// Constants for each constraint term
-  pub constants: Vec<F>,
-  /// Sets of matrix indices for Hadamard products
-  pub multisets: Vec<Vec<usize>>,
-  /// Constraint matrices
-  pub matrices: Vec<SparseMatrix<F>>,
-}
-
-impl<F: Field + std::fmt::Debug> CCS<F> {
+impl<F: Field> CCS<Generic<F>, F> {
   /// Creates a new empty CCS.
   pub fn new() -> Self {
     Self::default()
@@ -77,7 +54,7 @@ impl<F: Field + std::fmt::Debug> CCS<F> {
           term *= products[idx][row];
         }
 
-        let contribution = self.constants[i] * term;
+        let contribution = self.selectors[i] * term;
         sum += contribution;
       }
 
@@ -99,7 +76,7 @@ impl<F: Field + std::fmt::Debug> CCS<F> {
   pub fn new_degree(d: usize) -> Self {
     assert!(d >= 2, "Degree must be positive");
 
-    let mut ccs = Self { constants: Vec::new(), multisets: Vec::new(), matrices: Vec::new() };
+    let mut ccs = Self { selectors: Vec::new(), multisets: Vec::new(), matrices: Vec::new() };
 
     // We'll create terms starting from highest degree down to degree 1
     // For a degree d CCS, we need terms of all degrees from d down to 1
@@ -112,7 +89,7 @@ impl<F: Field + std::fmt::Debug> CCS<F> {
 
       // Add this term's multiset and its coefficient
       ccs.multisets.push(matrix_indices);
-      ccs.constants.push(F::ONE);
+      ccs.selectors.push(F::ONE);
 
       // Update our tracking of matrix indices
       next_matrix_index += degree;
@@ -132,7 +109,7 @@ impl<F: Field + std::fmt::Debug> CCS<F> {
   }
 }
 
-impl<F: Field + Display> Display for CCS<F> {
+impl<F: Field + Display> Display for CCS<Generic<F>, F> {
   fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
     writeln!(f, "Customizable Constraint System:")?;
 
@@ -149,7 +126,7 @@ impl<F: Field + Display> Display for CCS<F> {
     // We expect multisets to come in pairs, each pair forming one constraint
     for i in 0..self.multisets.len() {
       // Write the constant for the first multiset
-      write!(f, "{}·(", self.constants[i])?;
+      write!(f, "{}·(", self.selectors[i])?;
 
       // Write the Hadamard product for the first multiset
       if let Some(first_idx) = self.multisets[i].first() {
@@ -197,7 +174,7 @@ mod tests {
     ccs.matrices = vec![m1, m2, m3];
     // Encode x * y - z = 0
     ccs.multisets = vec![vec![0, 1], vec![2]];
-    ccs.constants = vec![F17::ONE, F17::from(-1)];
+    ccs.selectors = vec![F17::ONE, F17::from(-1)];
 
     println!("\nTesting valid case: x=2, y=3, z=6");
     let x = vec![F17::from(2)]; // public input x = 2

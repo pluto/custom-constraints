@@ -5,6 +5,8 @@
 //! 2. DegreeConstrained: Circuit with enforced degree bounds
 //! 3. Optimized: Circuit after optimization passes
 
+use ccs::Generic;
+
 use super::*;
 
 use std::{collections::HashMap, marker::PhantomData};
@@ -244,7 +246,7 @@ impl<F: Field> Circuit<Building, F> {
 
 impl<const D: usize, F: Field> Circuit<DegreeConstrained<D>, F> {
   /// Converts circuit to CCS format.
-  pub fn into_ccs(self) -> CCS<F> {
+  pub fn into_ccs(self) -> CCS<Generic<F>, F> {
     let mut ccs = CCS::new_degree(D);
 
     // Calculate dimensions
@@ -274,7 +276,7 @@ impl<const D: usize, F: Field> Circuit<DegreeConstrained<D>, F> {
   /// * `output` - Output variable
   fn create_constraint(
     &self,
-    ccs: &mut CCS<F>,
+    ccs: &mut CCS<Generic<F>, F>,
     d: usize,
     row: usize,
     expr: &Expression<F>,
@@ -295,7 +297,7 @@ impl<const D: usize, F: Field> Circuit<DegreeConstrained<D>, F> {
   }
 
   /// Processes term in constraint creation.
-  fn process_term(&self, ccs: &mut CCS<F>, d: usize, row: usize, term: &Expression<F>) {
+  fn process_term(&self, ccs: &mut CCS<Generic<F>, F>, d: usize, row: usize, term: &Expression<F>) {
     // First, fully expand the expression
     let expanded = expand_expression(term);
 
@@ -311,7 +313,13 @@ impl<const D: usize, F: Field> Circuit<DegreeConstrained<D>, F> {
   }
 
   /// Processes a simple (non-compound) term.
-  fn process_simple_term(&self, ccs: &mut CCS<F>, d: usize, row: usize, term: &Expression<F>) {
+  fn process_simple_term(
+    &self,
+    ccs: &mut CCS<Generic<F>, F>,
+    d: usize,
+    row: usize,
+    term: &Expression<F>,
+  ) {
     match term {
       Expression::Mul(factors) => {
         // Collect constants and variables
@@ -554,7 +562,7 @@ fn multiply_expressions<F: Field>(a: &Expression<F>, b: &Expression<F>) -> Expre
 
 impl<const D: usize, F: Field> Circuit<Optimized<D>, F> {
   /// Converts and `Optimized` circuit into CCS.
-  pub fn into_ccs(self) -> CCS<F> {
+  pub fn into_ccs(self) -> CCS<Generic<F>, F> {
     let mut ccs = CCS::new_degree(D);
 
     // Calculate dimensions
@@ -577,7 +585,7 @@ impl<const D: usize, F: Field> Circuit<Optimized<D>, F> {
   /// Creates a constraint in the constraint system
   fn create_constraint(
     &self,
-    ccs: &mut CCS<F>,
+    ccs: &mut CCS<Generic<F>, F>,
     d: usize,
     row: usize,
     expr: &Expression<F>,
@@ -598,7 +606,7 @@ impl<const D: usize, F: Field> Circuit<Optimized<D>, F> {
   }
 
   /// Processes term in constraint creation.
-  fn process_term(&self, ccs: &mut CCS<F>, d: usize, row: usize, term: &Expression<F>) {
+  fn process_term(&self, ccs: &mut CCS<Generic<F>, F>, d: usize, row: usize, term: &Expression<F>) {
     match term {
       Expression::Mul(factors) => {
         let degree = factors.len();

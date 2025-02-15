@@ -9,6 +9,11 @@ readme      = "README.md"
 repository  = "https://github.com/autoparallel/custom-constraints"
 version     = "0.2.0"
 
+# Needed to deal with ark-ff's BS
+[features]
+asm     = []
+default = []
+
 [dependencies]
 [target.'cfg(target_arch = "x86_64")'.dependencies]
 ark-ff = { version = "0.5", features = ["parallel", "asm"] }

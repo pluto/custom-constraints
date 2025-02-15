@@ -21,11 +21,6 @@ pub trait CCSType<F> {
   type Selectors: Default;
 }
 
-pub struct Plonkish<F>(PhantomData<F>);
-impl<F> CCSType<F> for Plonkish<F> {
-  type Selectors = Vec<F>;
-}
-
 #[derive(Clone, Debug, Default)]
 pub struct Generic<F>(PhantomData<F>);
 impl<F: Default> CCSType<F> for Generic<F> {
@@ -41,4 +36,11 @@ pub struct CCS<C: CCSType<F>, F: Field> {
   pub multisets: Vec<Vec<usize>>,
   /// Constraint matrices
   pub matrices: Vec<SparseMatrix<F>>,
+}
+
+impl<C: CCSType<F> + Default, F: Field> CCS<C, F> {
+  /// Creates a new empty CCS.
+  pub fn new() -> Self {
+    Self::default()
+  }
 }

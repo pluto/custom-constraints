@@ -1,11 +1,6 @@
 use super::*;
 
 impl<F: Field> CCS<Generic<F>, F> {
-  /// Creates a new empty CCS.
-  pub fn new() -> Self {
-    Self::default()
-  }
-
   /// Checks if a witness and public input satisfy the constraint system.
   ///
   /// Forms vector z = (w, 1, x) and verifies that all constraints are satisfied.

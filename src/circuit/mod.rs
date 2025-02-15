@@ -252,6 +252,7 @@ impl<const D: usize, F: Field> Circuit<DegreeConstrained<D>, F> {
     // Calculate dimensions
     let num_cols = 1 + self.pub_inputs + self.wit_inputs + self.aux_count + self.output_count;
 
+    // TODO: Num rows does not need to equal the num cols
     // Initialize matrices
     for matrix in &mut ccs.matrices {
       *matrix = SparseMatrix::new_rows_cols(num_cols, num_cols);

@@ -269,14 +269,14 @@ impl<F: Field> CCS<Plonkish<F>, F> {
       }
 
       // Process linear terms
-      for i in 0..width {
-        if let Some(selector) = self.selectors.get(self.num_cross_terms() + i) {
-          let term = products[i][row];
+      products.iter().take(width).zip(self.selectors.iter().skip(self.num_cross_terms())).for_each(
+        |(product, selector)| {
+          let term = product[row];
           for &coeff in selector {
             sum += coeff * term;
           }
-        }
-      }
+        },
+      );
 
       // Add constant term
       if let Some(selector) = self.selectors.last() {

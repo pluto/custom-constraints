@@ -73,6 +73,43 @@ impl<F: Field> SparseMatrix<F> {
     }
   }
 
+  /// Writes a value to the matrix, expanding its dimensions if necessary.
+  ///
+  /// If the specified position is outside the current matrix dimensions,
+  /// the matrix will be expanded to accommodate the new position.
+  ///
+  /// # Arguments
+  /// * `row` - Row index for the value
+  /// * `col` - Column index for the value
+  /// * `val` - Value to write
+  ///
+  /// # Panics
+  /// - If attempting to write a zero value
+  pub fn write_expand(&mut self, row: usize, col: usize, val: F) {
+    assert_ne!(val, F::ZERO, "Trying to add a zero element into the `SparseMatrix`!");
+
+    // Expand the matrix if necessary
+    if row >= self.row_offsets.len() - 1 {
+      // Add new row offsets, copying the last offset
+      let last_offset = *self.row_offsets.last().unwrap();
+      self.row_offsets.resize(row + 2, last_offset);
+    }
+    if col >= self.num_cols {
+      self.num_cols = col + 1;
+    }
+
+    // Now we can use the existing write logic
+    self.write(row, col, val);
+  }
+
+  /// Returns the current dimensions of the matrix.
+  ///
+  /// # Returns
+  /// A tuple (rows, cols) representing the matrix dimensions
+  pub fn dimensions(&self) -> (usize, usize) {
+    (self.row_offsets.len() - 1, self.num_cols)
+  }
+
   #[allow(unused)]
   /// Removes an entry from the [`SparseMatrix`]
   fn remove(&mut self, row: usize, col: usize) {
@@ -326,5 +363,82 @@ mod tests {
     );
     assert_eq!(result.col_indices, [0, 1, 2]);
     assert_eq!(result.row_offsets, [0, 1, 2, 3]);
+  }
+
+  #[test]
+  #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+  fn test_write_expand() {
+    // Create a 2x2 matrix
+    let mut matrix = SparseMatrix::new_rows_cols(2, 2);
+
+    // Write within bounds
+    matrix.write_expand(0, 0, F17::from(1));
+    matrix.write_expand(1, 1, F17::from(2));
+
+    // Write beyond current dimensions
+    matrix.write_expand(3, 4, F17::from(3));
+
+    // Check dimensions
+    let (rows, cols) = matrix.dimensions();
+    assert_eq!(rows, 4);
+    assert_eq!(cols, 5);
+
+    // Verify values
+    let expected_values = vec![(0, 0, F17::from(1)), (1, 1, F17::from(2)), (3, 4, F17::from(3))];
+
+    for (row, col, expected_val) in expected_values {
+      // Find the value in the sparse representation
+      let row_start = matrix.row_offsets[row];
+      let row_end = matrix.row_offsets[row + 1];
+      let pos = matrix.col_indices[row_start..row_end].iter().position(|&c| c == col);
+
+      match pos {
+        Some(idx) => {
+          assert_eq!(
+            matrix.values[row_start + idx],
+            expected_val,
+            "Value mismatch at position ({}, {})",
+            row,
+            col
+          );
+        },
+        None => panic!("Expected value not found at position ({}, {})", row, col),
+      }
+    }
+  }
+
+  #[test]
+  #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+  fn test_write_expand_multiple() {
+    let mut matrix = SparseMatrix::new_rows_cols(2, 2);
+
+    // Write values in various orders to test expansion
+    matrix.write_expand(5, 3, F17::from(1));
+    matrix.write_expand(2, 6, F17::from(2));
+    matrix.write_expand(4, 1, F17::from(3));
+
+    let (rows, cols) = matrix.dimensions();
+    assert_eq!(rows, 6);
+    assert_eq!(cols, 7);
+
+    // Test that row offsets are properly maintained
+    assert_eq!(matrix.row_offsets.len(), rows + 1);
+
+    // Verify that all rows between have valid offsets
+    for i in 0..rows {
+      assert!(
+        matrix.row_offsets[i] <= matrix.row_offsets[i + 1],
+        "Row offset invariant violated at row {}",
+        i
+      );
+    }
+  }
+
+  #[test]
+  #[should_panic(expected = "Trying to add a zero element")]
+  #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+  fn test_write_expand_zero() {
+    let mut matrix = SparseMatrix::new_rows_cols(2, 2);
+    matrix.write_expand(3, 3, F17::from(0));
   }
 }

@@ -18,25 +18,34 @@
 //!
 //! Creating a constraint system for `x * y = z`:
 //! ```
-//! use crate::{mock::F17, CCS};
+//! use custom_constraints::{
+//!   ccs::{generic::Generic, CCS},
+//!   matrix::SparseMatrix,
+//! };
+//! # use ark_ff::{Field, Fp, MontBackend, MontConfig};
+//! # #[derive(MontConfig)]
+//! # #[modulus = "17"]
+//! # #[generator = "3"]
+//! # struct FConfig;
+//! # type F = Fp<MontBackend<FConfig, 1>, 1>;
 //!
 //! // Create matrices to select variables
 //! let mut m1 = SparseMatrix::new_rows_cols(1, 4);
-//! m1.write(0, 3, F17::ONE); // Select x
+//! m1.write(0, 3, F::ONE); // Select x
 //!
 //! let mut m2 = SparseMatrix::new_rows_cols(1, 4);
-//! m2.write(0, 0, F17::ONE); // Select y
+//! m2.write(0, 0, F::ONE); // Select y
 //!
 //! let mut m3 = SparseMatrix::new_rows_cols(1, 4);
-//! m3.write(0, 1, F17::ONE); // Select z
+//! m3.write(0, 1, F::ONE); // Select z
 //!
 //! // Create CCS and set matrices
-//! let mut ccs = CCS::<Generic<F17>, F17>::new();
+//! let mut ccs = CCS::<Generic<F>, F>::new();
 //! ccs.matrices = vec![m1, m2, m3];
 //!
 //! // Encode x * y - z = 0
 //! ccs.multisets = vec![vec![0, 1], vec![2]]; // Terms: (M1·z ∘ M2·z), (M3·z)
-//! ccs.selectors = vec![F17::ONE, F17::from(-1)]; // Coefficients: 1, -1
+//! ccs.selectors = vec![F::ONE, F::from(-1)]; // Coefficients: 1, -1
 //! ```
 //!
 //! # Features
@@ -63,6 +72,15 @@
 //! degree.
 
 use super::*;
+
+/// A type marker for the standard/generic CCS format with scalar constants as "selectors".
+#[derive(Clone, Debug, Default)]
+pub struct Generic<F>(PhantomData<F>);
+
+impl<F: Default> CCSType<F> for Generic<F> {
+  /// For Generic CCS, selectors are just single field elements
+  type Selectors = F;
+}
 
 impl<F: Field> CCS<Generic<F>, F> {
   /// Checks if a witness and public input satisfy the constraint system.

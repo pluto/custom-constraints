@@ -32,15 +32,6 @@ pub trait CCSType<F> {
   type Selectors: Default;
 }
 
-/// A type marker for the standard/generic CCS format with scalar constants as "selectors".
-#[derive(Clone, Debug, Default)]
-pub struct Generic<F>(PhantomData<F>);
-
-impl<F: Default> CCSType<F> for Generic<F> {
-  /// For Generic CCS, selectors are just single field elements
-  type Selectors = F;
-}
-
 /// A Customizable Constraint System over a field F.
 #[derive(Debug, Default)]
 pub struct CCS<C: CCSType<F>, F: Field> {

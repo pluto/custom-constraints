@@ -7,7 +7,7 @@
 
 use std::{collections::HashMap, marker::PhantomData};
 
-use ccs::Generic;
+use ccs::generic::Generic;
 
 use super::*;
 use crate::{ccs::CCS, matrix::SparseMatrix};

@@ -24,28 +24,37 @@
 //!
 //! # Example
 //! ```
-//! use crate::{mock::F17, CCS};
+//! use custom_constraints::{
+//!   ccs::{plonkish::Plonkish, CCS},
+//!   matrix::SparseMatrix,
+//! };
+//! # use ark_ff::{Field, Fp, MontBackend, MontConfig};
+//! # #[derive(MontConfig)]
+//! # #[modulus = "17"]
+//! # #[generator = "3"]
+//! # struct FConfig;
+//! # type F = Fp<MontBackend<FConfig, 1>, 1>;
 //!
 //! // Create a system for the constraint x * y + z = 0
-//! let mut ccs = CCS::<Plonkish<F17>, F17>::new_width(3);
+//! let mut ccs = CCS::<Plonkish<F>, F>::new_width(3);
 //! let c = ccs.add_constraint();
 //!
 //! // Set up matrices to select variables
 //! let mut a1 = SparseMatrix::new_rows_cols(1, 3);
-//! a1.write(0, 0, F17::ONE); // Select x
+//! a1.write(0, 0, F::ONE); // Select x
 //! ccs.matrices[0] = a1;
 //!
 //! let mut a2 = SparseMatrix::new_rows_cols(1, 3);
-//! a2.write(0, 1, F17::ONE); // Select y
+//! a2.write(0, 1, F::ONE); // Select y
 //! ccs.matrices[1] = a2;
 //!
 //! let mut a3 = SparseMatrix::new_rows_cols(1, 3);
-//! a3.write(0, 2, F17::ONE); // Select z
+//! a3.write(0, 2, F::ONE); // Select z
 //! ccs.matrices[2] = a3;
 //!
 //! // Set coefficients
-//! ccs.set_cross_term(0, 1, c, F17::ONE); // x * y
-//! ccs.set_linear(2, c, F17::ONE); // + z
+//! ccs.set_cross_term(0, 1, c, F::ONE); // x * y
+//! ccs.set_linear(2, c, F::ONE); // + z
 //! ```
 
 use super::*;
@@ -76,7 +85,14 @@ impl<F: Field> CCS<Plonkish<F>, F> {
   ///
   /// # Example
   /// ```
-  /// let ccs = CCS::<Plonkish<F17>, F17>::new_width(3); 
+  /// use custom_constraints::ccs::{plonkish::Plonkish, CCS};
+  /// # use ark_ff::{Field, Fp, MontBackend, MontConfig};
+  /// # #[derive(MontConfig)]
+  /// # #[modulus = "17"]
+  /// # #[generator = "3"]
+  /// # struct FConfig;
+  /// # type F = Fp<MontBackend<FConfig, 1>, 1>;
+  /// let ccs = CCS::<Plonkish<F>, F>::new_width(3);
   /// ```
   pub fn new_width(width: usize) -> Self {
     assert!(width >= 2, "Width must be at least 2");
@@ -118,7 +134,14 @@ impl<F: Field> CCS<Plonkish<F>, F> {
   ///
   /// # Example
   /// ```
-  /// let mut ccs = CCS::<Plonkish<F17>, F17>::new_width(2);
+  /// use custom_constraints::ccs::{plonkish::Plonkish, CCS};
+  /// # use ark_ff::{Field, Fp, MontBackend, MontConfig};
+  /// # #[derive(MontConfig)]
+  /// # #[modulus = "17"]
+  /// # #[generator = "3"]
+  /// # struct FConfig;
+  /// # type F = Fp<MontBackend<FConfig, 1>, 1>;
+  /// let mut ccs = CCS::<Plonkish<F>, F>::new_width(2);
   /// let c1 = ccs.add_constraint(); // First constraint
   /// let c2 = ccs.add_constraint(); // Second constraint
   /// ```

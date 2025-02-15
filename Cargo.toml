@@ -10,19 +10,19 @@ repository  = "https://github.com/autoparallel/custom-constraints"
 version     = "0.2.0"
 
 [dependencies]
-ark-ff = { version = "0.5", default-features = false, features = [
-  "parallel",
-  "asm",
-] }
-rayon = { version = "1.10" }
+[target.'cfg(target_arch = "x86_64")'.dependencies]
+ark-ff = { version = "0.5", features = ["parallel", "asm"] }
+
+[target.'cfg(not(target_arch = "x86_64"))'.dependencies]
+ark-ff = { version = "0.5", default-features = false, features = ["parallel"] }
 
 [dev-dependencies]
 ark-std = { version = "0.5", default-features = false, features = ["std"] }
-rand    = "0.8"
+rand    = "0.9"
 rstest  = { version = "0.24", default-features = false }
 
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]
-getrandom         = { version = "0.2", features = ["js"] }
+getrandom         = { version = "0.3", features = ["wasm_js"] }
 wasm-bindgen      = { version = "0.2" }
 wasm-bindgen-test = { version = "0.3" }
 

@@ -124,6 +124,7 @@ build-wasm:
 test:
     @just header "Running native architecture tests"
     cargo test --workspace --tests --all-features
+    cargo test --workspace --doc --all-features
     @just header "Running wasm tests"
     wasm-pack test --node
 
@@ -159,7 +160,7 @@ semver:
 # Run format for the workspace
 fmt:
     @just header "Formatting code"
-    cargo fmt --all
+    cargo +nightly fmt --all
     taplo fmt
 
 # Check for unused dependencies

@@ -1,34 +1,88 @@
-//! Implements the Customizable Constraint System (CCS) format.
+//! Implementation of the standard/generic Customizable Constraint Systems (CCS).
 //!
-//! A CCS represents arithmetic constraints through a combination of matrices
-//! and multisets, allowing efficient verification of arithmetic computations.
+//! This module provides a standard implementation of CCS where each selector is a single
+//! field element. The constraint system has the form:
 //!
-//! The system consists of:
-//! - A set of sparse matrices representing linear combinations
-//! - Multisets defining which matrices participate in each constraint
-//! - Constants applied to each constraint term
-
-use matrix::SparseMatrix;
+//! ```text
+//! sum_i q_i * (prod_{j in S_i} M_j z) = 0
+//! ```
+//!
+//! where:
+//! - `q_i` are field element selectors
+//! - `S_i` are multisets of matrix indices
+//! - `M_j` are the selector matrices
+//! - `z` is the combined input vector `z = (w, 1, x)`
+//! - `prod` denotes the Hadamard (element-wise) product
+//!
+//! # Example Usage
+//!
+//! Creating a constraint system for `x * y = z`:
+//! ```
+//! use custom_constraints::{
+//!   ccs::{generic::Generic, CCS},
+//!   matrix::SparseMatrix,
+//! };
+//! # use ark_ff::{Field, Fp, MontBackend, MontConfig};
+//! # #[derive(MontConfig)]
+//! # #[modulus = "17"]
+//! # #[generator = "3"]
+//! # struct FConfig;
+//! # type F = Fp<MontBackend<FConfig, 1>, 1>;
+//!
+//! // Create matrices to select variables
+//! let mut m1 = SparseMatrix::new_rows_cols(1, 4);
+//! m1.write(0, 3, F::ONE); // Select x
+//!
+//! let mut m2 = SparseMatrix::new_rows_cols(1, 4);
+//! m2.write(0, 0, F::ONE); // Select y
+//!
+//! let mut m3 = SparseMatrix::new_rows_cols(1, 4);
+//! m3.write(0, 1, F::ONE); // Select z
+//!
+//! // Create CCS and set matrices
+//! let mut ccs = CCS::<Generic<F>, F>::new();
+//! ccs.matrices = vec![m1, m2, m3];
+//!
+//! // Encode x * y - z = 0
+//! ccs.multisets = vec![vec![0, 1], vec![2]]; // Terms: (M1·z ∘ M2·z), (M3·z)
+//! ccs.selectors = vec![F::ONE, F::from(-1)]; // Coefficients: 1, -1
+//! ```
+//!
+//! # Features
+//!
+//! - Support for constraints up to arbitrary degree
+//! - Efficient sparse matrix operations
+//! - Verification of constraint satisfaction
+//! - Pretty-printing of constraint systems
+//!
+//! # Implementation Details
+//!
+//! The generic CCS uses:
+//! - Single field elements for selectors
+//! - Multisets to specify which matrices participate in each term
+//! - Sparse matrices for efficient variable selection
+//! - Combined input vector z = (w, 1, x) where:
+//!   - w is the witness vector
+//!   - 1 is a constant term
+//!   - x is the public input vector
+//!
+//! The system can represent arbitrary degree constraints through
+//! the `new_degree` constructor, which sets up the appropriate
+//! number of matrices and terms for constraints up to the specified
+//! degree.
 
 use super::*;
 
-/// A Customizable Constraint System over a field F.
-#[derive(Debug, Default)]
-pub struct CCS<F: Field> {
-  /// Constants for each constraint term
-  pub constants: Vec<F>,
-  /// Sets of matrix indices for Hadamard products
-  pub multisets: Vec<Vec<usize>>,
-  /// Constraint matrices
-  pub matrices: Vec<SparseMatrix<F>>,
+/// A type marker for the standard/generic CCS format with scalar constants as "selectors".
+#[derive(Clone, Debug, Default)]
+pub struct Generic<F>(PhantomData<F>);
+
+impl<F: Default> CCSType<F> for Generic<F> {
+  /// For Generic CCS, selectors are just single field elements
+  type Selectors = F;
 }
 
-impl<F: Field + std::fmt::Debug> CCS<F> {
-  /// Creates a new empty CCS.
-  pub fn new() -> Self {
-    Self::default()
-  }
-
+impl<F: Field> CCS<Generic<F>, F> {
   /// Checks if a witness and public input satisfy the constraint system.
   ///
   /// Forms vector z = (w, 1, x) and verifies that all constraints are satisfied.
@@ -77,7 +131,7 @@ impl<F: Field + std::fmt::Debug> CCS<F> {
           term *= products[idx][row];
         }
 
-        let contribution = self.constants[i] * term;
+        let contribution = self.selectors[i] * term;
         sum += contribution;
       }
 
@@ -99,7 +153,7 @@ impl<F: Field + std::fmt::Debug> CCS<F> {
   pub fn new_degree(d: usize) -> Self {
     assert!(d >= 2, "Degree must be positive");
 
-    let mut ccs = Self { constants: Vec::new(), multisets: Vec::new(), matrices: Vec::new() };
+    let mut ccs = Self { selectors: Vec::new(), multisets: Vec::new(), matrices: Vec::new() };
 
     // We'll create terms starting from highest degree down to degree 1
     // For a degree d CCS, we need terms of all degrees from d down to 1
@@ -112,7 +166,7 @@ impl<F: Field + std::fmt::Debug> CCS<F> {
 
       // Add this term's multiset and its coefficient
       ccs.multisets.push(matrix_indices);
-      ccs.constants.push(F::ONE);
+      ccs.selectors.push(F::ONE);
 
       // Update our tracking of matrix indices
       next_matrix_index += degree;
@@ -132,7 +186,7 @@ impl<F: Field + std::fmt::Debug> CCS<F> {
   }
 }
 
-impl<F: Field + Display> Display for CCS<F> {
+impl<F: Field + Display> Display for CCS<Generic<F>, F> {
   fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
     writeln!(f, "Customizable Constraint System:")?;
 
@@ -149,7 +203,7 @@ impl<F: Field + Display> Display for CCS<F> {
     // We expect multisets to come in pairs, each pair forming one constraint
     for i in 0..self.multisets.len() {
       // Write the constant for the first multiset
-      write!(f, "{}·(", self.constants[i])?;
+      write!(f, "{}·(", self.selectors[i])?;
 
       // Write the Hadamard product for the first multiset
       if let Some(first_idx) = self.multisets[i].first() {
@@ -193,11 +247,11 @@ mod tests {
     println!("M2 (selects y): {m2:?}");
     println!("M3 (selects z): {m3:?}");
 
-    let mut ccs = CCS::new();
+    let mut ccs = CCS::<Generic<_>, _>::new();
     ccs.matrices = vec![m1, m2, m3];
     // Encode x * y - z = 0
     ccs.multisets = vec![vec![0, 1], vec![2]];
-    ccs.constants = vec![F17::ONE, F17::from(-1)];
+    ccs.selectors = vec![F17::ONE, F17::from(-1)];
 
     println!("\nTesting valid case: x=2, y=3, z=6");
     let x = vec![F17::from(2)]; // public input x = 2

@@ -38,9 +38,11 @@ See the [Customizable constraint systems for succinct arguments](https://eprint.
 ## Roadmap
 
 - [x] CSR Sparse matrices
-- [ ] CCS structure
-- [ ] CCS checking
-- [ ] CCS builder/allocator (i.e., from constraints)
+- [x] CCS structure
+- [x] CCS checking
+- [x] CCS builder/allocator (i.e., from constraints)
+- [x] Plonkish CCS
+- [ ] Noir to Plonkish CCS
 
 ## Contributing
 

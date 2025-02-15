@@ -107,7 +107,7 @@ impl<F: Field> CCS<Plonkish<F>, F> {
       .enumerate()
       .map(|(i, matrix)| {
         let result = matrix * &z;
-        println!("A_{}·z = {:?}", i + 1, result);
+        println!("A_{}·z = {:?}", i, result);
         result
       })
       .collect();
@@ -178,7 +178,7 @@ impl<F: Field + Display> Display for CCS<Plonkish<F>, F> {
     // Display matrices
     writeln!(f, "\nMatrices:")?;
     for (i, matrix) in self.matrices.iter().enumerate() {
-      writeln!(f, "A_{} =", i + 1)?;
+      writeln!(f, "A_{} =", i)?;
       writeln!(f, "{}", matrix)?;
     }
 
@@ -190,7 +190,7 @@ impl<F: Field + Display> Display for CCS<Plonkish<F>, F> {
     for i in 0..width {
       for j in (i + 1)..width {
         if let Some(selector) = self.selectors.get(term_idx) {
-          write!(f, "q_{},{} = [", i + 1, j + 1)?;
+          write!(f, "q_{},{} = [", i, j)?;
           for (idx, &coeff) in selector.iter().enumerate() {
             if idx > 0 {
               write!(f, ", ")?;
@@ -206,7 +206,7 @@ impl<F: Field + Display> Display for CCS<Plonkish<F>, F> {
     // Display linear term selectors
     for i in 0..width {
       if let Some(selector) = self.selectors.get(term_idx) {
-        write!(f, "q_{} = [", i + 1)?;
+        write!(f, "q_{} = [", i)?;
         for (idx, &coeff) in selector.iter().enumerate() {
           if idx > 0 {
             write!(f, ", ")?;
@@ -243,7 +243,7 @@ impl<F: Field + Display> Display for CCS<Plonkish<F>, F> {
             if !first_term {
               write!(f, " + ")?;
             }
-            write!(f, "q_{},{}·(A_{}·z ∘ A_{}·z)", i + 1, j + 1, i + 1, j + 1)?;
+            write!(f, "q_{},{}·(A_{}·z ∘ A_{}·z)", i, j, i, j)?;
             first_term = false;
           }
         }
@@ -258,7 +258,7 @@ impl<F: Field + Display> Display for CCS<Plonkish<F>, F> {
           if !first_term {
             write!(f, " + ")?;
           }
-          write!(f, "q_{}·(A_{}·z)", i + 1, i + 1)?;
+          write!(f, "q_{}·(A_{}·z)", i, i)?;
           first_term = false;
         }
       }
@@ -393,5 +393,77 @@ mod tests {
     let x = vec![];
     let w = vec![-F17::from(1), F17::from(1)];
     assert!(ccs.is_satisfied(&x, &w));
+  }
+
+  #[test]
+  #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+  fn test_plonkish_width3() {
+    let mut ccs = CCS::<Plonkish<F17>, F17>::new_width(3);
+
+    // Let's create a constraint:
+    // (x * y) + (y * z) + (x * z) + 2x + 3y + 4z + 5 = 0
+
+    // Set up matrices
+    let mut a0 = SparseMatrix::new_rows_cols(1, 3);
+    a0.write(0, 0, F17::ONE); // Select x
+    ccs.matrices[0] = a0;
+
+    let mut a1 = SparseMatrix::new_rows_cols(1, 3);
+    a1.write(0, 1, F17::ONE); // Select y
+    ccs.matrices[1] = a1;
+
+    let mut a2 = SparseMatrix::new_rows_cols(1, 3);
+    a2.write(0, 2, F17::ONE); // Select z
+    ccs.matrices[2] = a2;
+
+    // Set cross terms
+    ccs.set_cross_term(0, 1, F17::ONE); // x * y
+    ccs.set_cross_term(1, 2, F17::ONE); // y * z
+    ccs.set_cross_term(0, 2, F17::ONE); // x * z
+
+    // Set linear terms
+    ccs.set_linear(0, F17::from(2)); // 2x
+    ccs.set_linear(1, F17::from(3)); // 3y
+    ccs.set_linear(2, F17::from(4)); // 4z
+
+    // Set constant term
+    ccs.set_constant(-F17::from(4)); // - 4
+
+    println!("ccs: {ccs}");
+
+    // Let's use x = 2, y = 3, z = 4
+    // (2 * 3) + (3 * 4) + (2 * 4) + 2*2 + 3*3 + 4*4 + 5
+    // = 6 + 12 + 8 + 4 + 9 + 16 + 5
+    // = 60 ≡ 9 (mod 17)
+    let x = vec![];
+    let w = vec![F17::from(2), F17::from(3), F17::from(4)];
+
+    // Let's print the computation
+    println!("\nVerifying computation:");
+    let xy = F17::from(2) * F17::from(3);
+    let yz = F17::from(3) * F17::from(4);
+    let xz = F17::from(2) * F17::from(4);
+    let x_term = F17::from(2) * F17::from(2);
+    let y_term = F17::from(3) * F17::from(3);
+    let z_term = F17::from(4) * F17::from(4);
+    let constant = -F17::from(4);
+
+    println!("x * y = {}", xy);
+    println!("y * z = {}", yz);
+    println!("x * z = {}", xz);
+    println!("2x = {}", x_term);
+    println!("3y = {}", y_term);
+    println!("4z = {}", z_term);
+    println!("constant = {}", constant);
+    println!("sum = {}", xy + yz + xz + x_term + y_term + z_term + constant);
+
+    // Find solution where this equals 0 (mod 17)
+    // Solution: x = 2, y = 3, z = 1
+    let w = vec![F17::from(2), F17::from(3), F17::from(4)];
+    assert!(ccs.is_satisfied(&x, &w));
+
+    // Invalid assignment should fail
+    let w = vec![F17::from(1), F17::from(1), F17::from(1)];
+    assert!(!ccs.is_satisfied(&x, &w));
   }
 }

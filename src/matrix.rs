@@ -110,6 +110,11 @@ impl<F: Field> SparseMatrix<F> {
     (self.row_offsets.len() - 1, self.num_cols)
   }
 
+  /// Adds a new empty row to the matrix
+  pub fn add_row(&mut self) {
+    self.row_offsets.push(*self.row_offsets.last().unwrap_or(&0));
+  }
+
   #[allow(unused)]
   /// Removes an entry from the [`SparseMatrix`]
   fn remove(&mut self, row: usize, col: usize) {

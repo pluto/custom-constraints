@@ -165,7 +165,7 @@ mod tests {
     println!("M2 (selects y): {m2:?}");
     println!("M3 (selects z): {m3:?}");
 
-    let mut ccs = CCS::new();
+    let mut ccs = CCS::<Generic<_>, _>::new();
     ccs.matrices = vec![m1, m2, m3];
     // Encode x * y - z = 0
     ccs.multisets = vec![vec![0, 1], vec![2]];

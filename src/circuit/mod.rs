@@ -5,7 +5,7 @@
 //! 2. DegreeConstrained: Circuit with enforced degree bounds
 //! 3. Optimized: Circuit after optimization passes
 
-use ccs::Generic;
+use ccs::{plonkish::Plonkish, Generic};
 
 use super::*;
 
@@ -743,7 +743,7 @@ impl<S: CircuitState, F: Field> Circuit<S, F> {
 }
 
 /// Computes the degree of an expression.
-fn compute_degree<F: Field>(expr: &Expression<F>) -> usize {
+pub fn compute_degree<F: Field>(expr: &Expression<F>) -> usize {
   match expr {
     // Constants are degree 0
     Expression::Constant(_) => 0,

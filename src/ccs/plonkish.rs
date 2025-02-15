@@ -107,7 +107,7 @@ impl<F: Field> CCS<Plonkish<F>, F> {
       .enumerate()
       .map(|(i, matrix)| {
         let result = matrix * &z;
-        println!("A_{}·z = {:?}", i, result);
+        println!("A_{i}·z = {result:?}");
         result
       })
       .collect();
@@ -153,7 +153,7 @@ impl<F: Field> CCS<Plonkish<F>, F> {
         }
       }
 
-      println!("Row {}: sum = {:?}", row, sum);
+      println!("Row {row}: sum = {sum:?}");
       if sum != F::ZERO {
         return false;
       }
@@ -173,13 +173,13 @@ impl<F: Field + Display> Display for CCS<Plonkish<F>, F> {
   fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
     let width = self.matrices.len();
 
-    writeln!(f, "Plonkish Constraint System (width = {}):", width)?;
+    writeln!(f, "Plonkish Constraint System (width = {width}):")?;
 
     // Display matrices
     writeln!(f, "\nMatrices:")?;
     for (i, matrix) in self.matrices.iter().enumerate() {
-      writeln!(f, "A_{} =", i)?;
-      writeln!(f, "{}", matrix)?;
+      writeln!(f, "A_{i} =")?;
+      writeln!(f, "{matrix}")?;
     }
 
     // Display selectors
@@ -190,12 +190,12 @@ impl<F: Field + Display> Display for CCS<Plonkish<F>, F> {
     for i in 0..width {
       for j in (i + 1)..width {
         if let Some(selector) = self.selectors.get(term_idx) {
-          write!(f, "q_{},{} = [", i, j)?;
+          write!(f, "q_{i},{j} = [")?;
           for (idx, &coeff) in selector.iter().enumerate() {
             if idx > 0 {
               write!(f, ", ")?;
             }
-            write!(f, "{}", coeff)?;
+            write!(f, "{coeff}")?;
           }
           writeln!(f, "]")?;
         }
@@ -206,12 +206,12 @@ impl<F: Field + Display> Display for CCS<Plonkish<F>, F> {
     // Display linear term selectors
     for i in 0..width {
       if let Some(selector) = self.selectors.get(term_idx) {
-        write!(f, "q_{} = [", i)?;
+        write!(f, "q_{i} = [")?;
         for (idx, &coeff) in selector.iter().enumerate() {
           if idx > 0 {
             write!(f, ", ")?;
           }
-          write!(f, "{}", coeff)?;
+          write!(f, "{coeff}")?;
         }
         writeln!(f, "]")?;
       }
@@ -224,7 +224,7 @@ impl<F: Field + Display> Display for CCS<Plonkish<F>, F> {
         if idx > 0 {
           write!(f, ", ")?;
         }
-        write!(f, "{}", coeff)?;
+        write!(f, "{coeff}")?;
       }
       writeln!(f, "]")?;
     }
@@ -243,7 +243,7 @@ impl<F: Field + Display> Display for CCS<Plonkish<F>, F> {
             if !first_term {
               write!(f, " + ")?;
             }
-            write!(f, "q_{},{}·(A_{}·z ∘ A_{}·z)", i, j, i, j)?;
+            write!(f, "q_{i},{j}·(A_{i}·z ∘ A_{j}·z)")?;
             first_term = false;
           }
         }
@@ -258,7 +258,7 @@ impl<F: Field + Display> Display for CCS<Plonkish<F>, F> {
           if !first_term {
             write!(f, " + ")?;
           }
-          write!(f, "q_{}·(A_{}·z)", i, i)?;
+          write!(f, "q_{i}·(A_{i}·z)")?;
           first_term = false;
         }
       }
@@ -319,7 +319,7 @@ mod tests {
     ccs.set_linear(0, F17::from(4)); // 4(A_1·z)
     ccs.set_linear(1, F17::from(5)); // 5(A_2·z)
 
-    println!("{}", ccs);
+    println!("{ccs}");
   }
 
   #[test]
@@ -356,10 +356,10 @@ mod tests {
     let lin1 = F17::from(2) * F17::from(4); // 2x
     let lin2 = F17::from(3) * F17::from(5); // 3y
     let constant = F17::from(8); // 4
-    println!("x * y = {}", prod);
-    println!("2x = {}", lin1);
-    println!("3y = {}", lin2);
-    println!("constant = {}", constant);
+    println!("x * y = {prod}");
+    println!("2x = {lin1}");
+    println!("3y = {lin2}");
+    println!("constant = {constant}");
     println!("sum = {}", prod + lin1 + lin2 + constant);
 
     assert!(ccs.is_satisfied(&x, &w));
@@ -431,13 +431,6 @@ mod tests {
 
     println!("ccs: {ccs}");
 
-    // Let's use x = 2, y = 3, z = 4
-    // (2 * 3) + (3 * 4) + (2 * 4) + 2*2 + 3*3 + 4*4 + 5
-    // = 6 + 12 + 8 + 4 + 9 + 16 + 5
-    // = 60 ≡ 9 (mod 17)
-    let x = vec![];
-    let w = vec![F17::from(2), F17::from(3), F17::from(4)];
-
     // Let's print the computation
     println!("\nVerifying computation:");
     let xy = F17::from(2) * F17::from(3);
@@ -448,14 +441,16 @@ mod tests {
     let z_term = F17::from(4) * F17::from(4);
     let constant = -F17::from(4);
 
-    println!("x * y = {}", xy);
-    println!("y * z = {}", yz);
-    println!("x * z = {}", xz);
-    println!("2x = {}", x_term);
-    println!("3y = {}", y_term);
-    println!("4z = {}", z_term);
-    println!("constant = {}", constant);
+    println!("x * y = {xy}");
+    println!("y * z = {yz}");
+    println!("x * z = {xz}");
+    println!("2x = {x_term}");
+    println!("3y = {y_term}");
+    println!("4z = {z_term}");
+    println!("constant = {constant}");
     println!("sum = {}", xy + yz + xz + x_term + y_term + z_term + constant);
+
+    let x = vec![];
 
     // Find solution where this equals 0 (mod 17)
     // Solution: x = 2, y = 3, z = 1

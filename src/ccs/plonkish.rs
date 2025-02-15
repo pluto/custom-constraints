@@ -1,5 +1,60 @@
+//! PLONK-style Customizable Constraint Systems (CCS).
+//!
+//! This module implements a variant of CCS that follows the PLONK (Permutations over
+//! Lagrange-bases for Oecumenical Noninteractive arguments of Knowledge) design pattern.
+//! The constraint system has the form:
+//!
+//! ```text
+//! sum_{i<j} q_{i,j} (A_i z ∘ A_j z) + sum_i q_i (A_i z) + q_c = 0
+//! ```
+//!
+//! where:
+//! - `q_{i,j}` are cross-term selector vectors
+//! - `q_i` are linear-term selector vectors
+//! - `q_c` is the constant term selector vector
+//! - `A_i` are the selector matrices
+//! - `z` is the input vector (public inputs and witness)
+//! - `∘` denotes the Hadamard (element-wise) product
+//!
+//! # Features
+//! - Support for multiple constraints
+//! - Quadratic terms between different selector matrices
+//! - Linear terms for each selector matrix
+//! - Constant terms for each constraint
+//!
+//! # Example
+//! ```
+//! use crate::{mock::F17, CCS};
+//!
+//! // Create a system for the constraint x * y + z = 0
+//! let mut ccs = CCS::<Plonkish<F17>, F17>::new_width(3);
+//! let c = ccs.add_constraint();
+//!
+//! // Set up matrices to select variables
+//! let mut a1 = SparseMatrix::new_rows_cols(1, 3);
+//! a1.write(0, 0, F17::ONE); // Select x
+//! ccs.matrices[0] = a1;
+//!
+//! let mut a2 = SparseMatrix::new_rows_cols(1, 3);
+//! a2.write(0, 1, F17::ONE); // Select y
+//! ccs.matrices[1] = a2;
+//!
+//! let mut a3 = SparseMatrix::new_rows_cols(1, 3);
+//! a3.write(0, 2, F17::ONE); // Select z
+//! ccs.matrices[2] = a3;
+//!
+//! // Set coefficients
+//! ccs.set_cross_term(0, 1, c, F17::ONE); // x * y
+//! ccs.set_linear(2, c, F17::ONE); // + z
+//! ```
+
 use super::*;
 
+/// A type marker for PLONK-style constraint systems.
+///
+/// This type configures a CCS to use vector-valued selectors suitable for
+/// PLONK-style constraints where each selector holds coefficients for multiple
+/// constraints.
 #[derive(Clone, Debug, Default)]
 pub struct Plonkish<F>(PhantomData<F>);
 impl<F> CCSType<F> for Plonkish<F> {
@@ -8,15 +63,21 @@ impl<F> CCSType<F> for Plonkish<F> {
 
 impl<F: Field> CCS<Plonkish<F>, F> {
   /// Creates a new Plonkish CCS with the specified width.
-  /// The width determines the number of matrices A_i in the system.
-  /// The minimum width is 2, corresponding to PLONK-style constraints
-  /// where we have cross-terms between different selector matrices.
+  ///
+  /// The width determines the number of selector matrices A_i in the system.
+  /// Each matrix can select different variables from the input vector z.
+  /// Cross terms (multiplications) are only allowed between different matrices.
   ///
   /// # Arguments
   /// * `width` - Number of matrices A_i (must be >= 2)
   ///
   /// # Panics
   /// If width < 2
+  ///
+  /// # Example
+  /// ```
+  /// let ccs = CCS::<Plonkish<F17>, F17>::new_width(3); 
+  /// ```
   pub fn new_width(width: usize) -> Self {
     assert!(width >= 2, "Width must be at least 2");
 
@@ -47,11 +108,23 @@ impl<F: Field> CCS<Plonkish<F>, F> {
   }
 
   /// Adds a new constraint to the system.
-  /// Returns the index of the new constraint.
+  ///
+  /// This extends all matrices with a new row and all selectors with a new
+  /// coefficient initialized to zero. The new constraint can then be configured
+  /// using set_cross_term, set_linear, and set_constant.
+  ///
+  /// # Returns
+  /// The index of the new constraint (0-based)
+  ///
+  /// # Example
+  /// ```
+  /// let mut ccs = CCS::<Plonkish<F17>, F17>::new_width(2);
+  /// let c1 = ccs.add_constraint(); // First constraint
+  /// let c2 = ccs.add_constraint(); // Second constraint
+  /// ```
   pub fn add_constraint(&mut self) -> usize {
     // Get current number of constraints
-    let constraint_idx =
-      if let Some(first) = self.matrices.first() { first.dimensions().0 } else { 0 };
+    let constraint_idx = self.matrices.first().map_or(0, |first| first.dimensions().0);
 
     // Add a new row to each matrix
     for matrix in &mut self.matrices {
@@ -66,7 +139,20 @@ impl<F: Field> CCS<Plonkish<F>, F> {
     constraint_idx
   }
 
-  /// Sets a cross-term coefficient for a specific constraint
+  /// Sets a cross-term coefficient q_{i,j} for a specific constraint.
+  ///
+  /// This sets the coefficient for the term A_i·z ∘ A_j·z in the specified constraint.
+  ///
+  /// # Arguments
+  /// * `i` - First matrix index
+  /// * `j` - Second matrix index (must be different from i)
+  /// * `constraint_idx` - Index of the constraint to modify
+  /// * `value` - Coefficient value to set
+  ///
+  /// # Panics
+  /// - If i == j (cross terms must be between different matrices)
+  /// - If i or j are out of bounds
+  /// - If constraint_idx is out of bounds
   pub fn set_cross_term(&mut self, i: usize, j: usize, constraint_idx: usize, value: F) {
     assert!(i != j, "Cross terms must be between different matrices");
     let width = self.matrices.len();
@@ -85,7 +171,18 @@ impl<F: Field> CCS<Plonkish<F>, F> {
     }
   }
 
-  /// Sets a linear term coefficient for a specific constraint
+  /// Sets a linear term coefficient q_i for a specific constraint.
+  ///
+  /// This sets the coefficient for the term A_i·z in the specified constraint.
+  ///
+  /// # Arguments
+  /// * `i` - Matrix index
+  /// * `constraint_idx` - Index of the constraint to modify
+  /// * `value` - Coefficient value to set
+  ///
+  /// # Panics
+  /// - If i is out of bounds
+  /// - If constraint_idx is out of bounds
   pub fn set_linear(&mut self, i: usize, constraint_idx: usize, value: F) {
     let width = self.matrices.len();
     assert!(i < width, "Matrix index out of bounds");
@@ -98,7 +195,14 @@ impl<F: Field> CCS<Plonkish<F>, F> {
     }
   }
 
-  /// Sets a constant term for a specific constraint
+  /// Sets the constant term q_c for a specific constraint.
+  ///
+  /// # Arguments
+  /// * `constraint_idx` - Index of the constraint to modify
+  /// * `value` - Constant value to set
+  ///
+  /// # Panics
+  /// If constraint_idx is out of bounds
   pub fn set_constant(&mut self, constraint_idx: usize, value: F) {
     if let Some(selector) = self.selectors.last_mut() {
       if let Some(coeff) = selector.get_mut(constraint_idx) {

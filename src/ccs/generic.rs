@@ -1,3 +1,67 @@
+//! Implementation of the standard/generic Customizable Constraint Systems (CCS).
+//!
+//! This module provides a standard implementation of CCS where each selector is a single
+//! field element. The constraint system has the form:
+//!
+//! ```text
+//! sum_i q_i * (prod_{j in S_i} M_j z) = 0
+//! ```
+//!
+//! where:
+//! - `q_i` are field element selectors
+//! - `S_i` are multisets of matrix indices
+//! - `M_j` are the selector matrices
+//! - `z` is the combined input vector `z = (w, 1, x)`
+//! - `prod` denotes the Hadamard (element-wise) product
+//!
+//! # Example Usage
+//!
+//! Creating a constraint system for `x * y = z`:
+//! ```
+//! use crate::{mock::F17, CCS};
+//!
+//! // Create matrices to select variables
+//! let mut m1 = SparseMatrix::new_rows_cols(1, 4);
+//! m1.write(0, 3, F17::ONE); // Select x
+//!
+//! let mut m2 = SparseMatrix::new_rows_cols(1, 4);
+//! m2.write(0, 0, F17::ONE); // Select y
+//!
+//! let mut m3 = SparseMatrix::new_rows_cols(1, 4);
+//! m3.write(0, 1, F17::ONE); // Select z
+//!
+//! // Create CCS and set matrices
+//! let mut ccs = CCS::<Generic<F17>, F17>::new();
+//! ccs.matrices = vec![m1, m2, m3];
+//!
+//! // Encode x * y - z = 0
+//! ccs.multisets = vec![vec![0, 1], vec![2]]; // Terms: (M1·z ∘ M2·z), (M3·z)
+//! ccs.selectors = vec![F17::ONE, F17::from(-1)]; // Coefficients: 1, -1
+//! ```
+//!
+//! # Features
+//!
+//! - Support for constraints up to arbitrary degree
+//! - Efficient sparse matrix operations
+//! - Verification of constraint satisfaction
+//! - Pretty-printing of constraint systems
+//!
+//! # Implementation Details
+//!
+//! The generic CCS uses:
+//! - Single field elements for selectors
+//! - Multisets to specify which matrices participate in each term
+//! - Sparse matrices for efficient variable selection
+//! - Combined input vector z = (w, 1, x) where:
+//!   - w is the witness vector
+//!   - 1 is a constant term
+//!   - x is the public input vector
+//!
+//! The system can represent arbitrary degree constraints through
+//! the `new_degree` constructor, which sets up the appropriate
+//! number of matrices and terms for constraints up to the specified
+//! degree.
+
 use super::*;
 
 impl<F: Field> CCS<Generic<F>, F> {

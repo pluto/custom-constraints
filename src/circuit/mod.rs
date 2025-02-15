@@ -5,17 +5,15 @@
 //! 2. DegreeConstrained: Circuit with enforced degree bounds
 //! 3. Optimized: Circuit after optimization passes
 
-use ccs::{plonkish::Plonkish, Generic};
-
-use super::*;
-
 use std::{collections::HashMap, marker::PhantomData};
 
+use ccs::Generic;
+
+use super::*;
 use crate::{ccs::CCS, matrix::SparseMatrix};
 
 pub mod expression;
-#[cfg(test)]
-mod tests;
+#[cfg(test)] mod tests;
 
 use self::expression::*;
 
@@ -42,32 +40,32 @@ impl<const DEGREE: usize> CircuitState for Optimized<DEGREE> {}
 #[derive(Debug, Clone, Default)]
 pub struct Circuit<S: CircuitState, F: Field> {
   /// Number of public inputs
-  pub pub_inputs: usize,
+  pub pub_inputs:   usize,
   /// Number of witness inputs  
-  pub wit_inputs: usize,
+  pub wit_inputs:   usize,
   /// Number of auxiliary variables
-  pub aux_count: usize,
+  pub aux_count:    usize,
   /// Number of output variables
   pub output_count: usize,
   /// Circuit expressions and their assigned variables
-  expressions: Vec<(Expression<F>, Variable)>,
+  expressions:      Vec<(Expression<F>, Variable)>,
   /// Memoization cache for expressions
-  memo: HashMap<String, Variable>,
+  memo:             HashMap<String, Variable>,
   /// State type marker
-  _marker: PhantomData<S>,
+  _marker:          PhantomData<S>,
 }
 
 impl<F: Field> Circuit<Building, F> {
   /// Creates a new empty circuit.
   pub fn new() -> Self {
     Self {
-      pub_inputs: 0,
-      wit_inputs: 0,
-      aux_count: 0,
+      pub_inputs:   0,
+      wit_inputs:   0,
+      aux_count:    0,
       output_count: 0,
-      expressions: Vec::new(),
-      memo: HashMap::new(),
-      _marker: PhantomData,
+      expressions:  Vec::new(),
+      memo:         HashMap::new(),
+      _marker:      PhantomData,
     }
   }
 
@@ -86,9 +84,7 @@ impl<F: Field> Circuit<Building, F> {
   }
 
   /// Creates a constant expression.
-  pub const fn constant(c: F) -> Expression<F> {
-    Expression::Constant(c)
-  }
+  pub const fn constant(c: F) -> Expression<F> { Expression::Constant(c) }
 
   /// Adds an internal auxiliary variable.
   pub fn add_internal(&mut self, expr: Expression<F>) -> Expression<F> {
@@ -146,13 +142,13 @@ impl<F: Field> Circuit<Building, F> {
     }
 
     Circuit {
-      pub_inputs: self.pub_inputs,
-      wit_inputs: self.wit_inputs,
-      aux_count: self.aux_count,
+      pub_inputs:   self.pub_inputs,
+      wit_inputs:   self.wit_inputs,
+      aux_count:    self.aux_count,
       output_count: self.output_count,
-      expressions: self.expressions,
-      memo: self.memo,
-      _marker: PhantomData,
+      expressions:  self.expressions,
+      memo:         self.memo,
+      _marker:      PhantomData,
     }
   }
 
@@ -288,11 +284,10 @@ impl<const D: usize, F: Field> Circuit<DegreeConstrained<D>, F> {
     ccs.matrices.last_mut().unwrap().write(row, output_pos, -F::ONE);
 
     match expr {
-      Expression::Add(terms) => {
+      Expression::Add(terms) =>
         for term in terms {
           self.process_term(ccs, d, row, term);
-        }
-      },
+        },
       _ => self.process_term(ccs, d, row, expr),
     }
   }
@@ -497,13 +492,13 @@ impl<const D: usize, F: Field> Circuit<DegreeConstrained<D>, F> {
 
     // Convert to optimized circuit
     Circuit {
-      pub_inputs: new_circuit.pub_inputs,
-      wit_inputs: new_circuit.wit_inputs,
-      aux_count: new_circuit.aux_count,
+      pub_inputs:   new_circuit.pub_inputs,
+      wit_inputs:   new_circuit.wit_inputs,
+      aux_count:    new_circuit.aux_count,
       output_count: new_circuit.output_count,
-      expressions: new_circuit.expressions,
-      memo: new_circuit.memo,
-      _marker: PhantomData,
+      expressions:  new_circuit.expressions,
+      memo:         new_circuit.memo,
+      _marker:      PhantomData,
     }
   }
 }
@@ -597,11 +592,10 @@ impl<const D: usize, F: Field> Circuit<Optimized<D>, F> {
     ccs.matrices.last_mut().unwrap().write(row, output_pos, -F::ONE);
 
     match expr {
-      Expression::Add(terms) => {
+      Expression::Add(terms) =>
         for term in terms {
           self.process_term(ccs, d, row, term);
-        }
-      },
+        },
       _ => self.process_term(ccs, d, row, expr),
     }
   }
@@ -673,9 +667,7 @@ impl<const D: usize, F: Field> Circuit<Optimized<D>, F> {
 
 impl<S: CircuitState, F: Field> Circuit<S, F> {
   /// Returns circuit expressions.
-  pub fn expressions(&self) -> &[(Expression<F>, Variable)] {
-    &self.expressions
-  }
+  pub fn expressions(&self) -> &[(Expression<F>, Variable)] { &self.expressions }
 
   // TODO: Should this really only be some kind of `#[cfg(test)]` fn?
   /// Expands an expression by substituting definitions.
@@ -686,25 +678,21 @@ impl<S: CircuitState, F: Field> Circuit<S, F> {
       | Expression::Variable(Variable::Public(_) | Variable::Witness(_)) => expr.clone(),
 
       // For auxiliary and output variables, look up their definition
-      Expression::Variable(var @ (Variable::Aux(_) | Variable::Output(_))) => {
-        self.get_definition(var).map_or_else(|| expr.clone(), |definition| self.expand(definition))
-      },
+      Expression::Variable(var @ (Variable::Aux(_) | Variable::Output(_))) =>
+        self.get_definition(var).map_or_else(|| expr.clone(), |definition| self.expand(definition)),
 
-      Expression::Add(terms) => {
-        Expression::Add(terms.iter().map(|term| self.expand(term)).collect())
-      },
-      Expression::Mul(factors) => {
-        Expression::Mul(factors.iter().map(|factor| self.expand(factor)).collect())
-      },
+      Expression::Add(terms) =>
+        Expression::Add(terms.iter().map(|term| self.expand(term)).collect()),
+      Expression::Mul(factors) =>
+        Expression::Mul(factors.iter().map(|factor| self.expand(factor)).collect()),
     }
   }
 
   /// Gets definition for a variable if it exists.
   fn get_definition(&self, var: &Variable) -> Option<&Expression<F>> {
     match var {
-      Variable::Aux(idx) | Variable::Output(idx) => {
-        self.expressions.get(*idx).map(|(expr, _)| expr)
-      },
+      Variable::Aux(idx) | Variable::Output(idx) =>
+        self.expressions.get(*idx).map(|(expr, _)| expr),
       _ => None,
     }
   }

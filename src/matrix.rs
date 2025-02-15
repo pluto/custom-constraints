@@ -17,9 +17,9 @@ pub struct SparseMatrix<F> {
   /// Column indices of non-zero elements
   col_indices: Vec<usize>,
   /// Values of non-zero elements
-  values: Vec<F>,
+  values:      Vec<F>,
   /// Number of columns in the matrix
-  num_cols: usize,
+  num_cols:    usize,
 }
 
 impl<F: Field> SparseMatrix<F> {
@@ -106,14 +106,10 @@ impl<F: Field> SparseMatrix<F> {
   ///
   /// # Returns
   /// A tuple (rows, cols) representing the matrix dimensions
-  pub fn dimensions(&self) -> (usize, usize) {
-    (self.row_offsets.len() - 1, self.num_cols)
-  }
+  pub fn dimensions(&self) -> (usize, usize) { (self.row_offsets.len() - 1, self.num_cols) }
 
   /// Adds a new empty row to the matrix
-  pub fn add_row(&mut self) {
-    self.row_offsets.push(*self.row_offsets.last().unwrap_or(&0));
-  }
+  pub fn add_row(&mut self) { self.row_offsets.push(*self.row_offsets.last().unwrap_or(&0)); }
 
   #[allow(unused)]
   /// Removes an entry from the [`SparseMatrix`]
@@ -358,14 +354,11 @@ mod tests {
     // [6 0 0]
     // [0 6 0]
     // [0 0 10]
-    assert_eq!(
-      result.values,
-      [
-        F17::from(6),  // 2*3 at (0,0)
-        F17::from(6),  // 3*2 at (1,1)
-        F17::from(10), // 5*2 at (2,2)
-      ]
-    );
+    assert_eq!(result.values, [
+      F17::from(6),  // 2*3 at (0,0)
+      F17::from(6),  // 3*2 at (1,1)
+      F17::from(10), // 5*2 at (2,2)
+    ]);
     assert_eq!(result.col_indices, [0, 1, 2]);
     assert_eq!(result.row_offsets, [0, 1, 2, 3]);
   }

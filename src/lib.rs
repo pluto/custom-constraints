@@ -15,10 +15,10 @@
 //! - [`CCS`](ccs::CCS): The customizable constraint system representation
 //! - [`SparseMatrix`](matrix::SparseMatrix): Efficient sparse matrix operations
 
-use ark_ff::Field;
-#[cfg(test)]
-use mock::F17;
 use std::fmt::{self, Display, Formatter};
+
+use ark_ff::Field;
+#[cfg(test)] use mock::F17;
 #[cfg(all(target_arch = "wasm32", test))]
 use wasm_bindgen_test::wasm_bindgen_test;
 

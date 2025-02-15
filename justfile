@@ -159,7 +159,7 @@ semver:
 # Run format for the workspace
 fmt:
     @just header "Formatting code"
-    cargo fmt --all
+    cargo +nightly fmt --all
     taplo fmt
 
 # Check for unused dependencies

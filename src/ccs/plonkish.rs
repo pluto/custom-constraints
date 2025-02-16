@@ -377,20 +377,23 @@ mod tests {
     let ccs = CCS::<Plonkish<F17>, F17>::new_width(3);
 
     // For width 3, we should have:
-    // - 3 cross terms (1,2), (1,3), (2,3)
+    // - 6 cross terms (0,0), (0,1), (0,2), (1,1), (1,2), (2,2)
     // - 3 linear terms
     // - 1 constant term
-    assert_eq!(ccs.multisets.len(), 7, "Should have 6 terms total");
+    assert_eq!(ccs.multisets.len(), 10, "Should have 6 terms total");
 
     // Check cross term multisets
-    assert_eq!(ccs.multisets[0], vec![0, 1], "First cross term incorrect");
-    assert_eq!(ccs.multisets[1], vec![0, 2], "Second cross term incorrect");
-    assert_eq!(ccs.multisets[2], vec![1, 2], "Third cross term incorrect");
+    assert_eq!(ccs.multisets[0], vec![0, 0], "First cross term incorrect");
+    assert_eq!(ccs.multisets[1], vec![0, 1], "Second cross term incorrect");
+    assert_eq!(ccs.multisets[2], vec![0, 2], "Third cross term incorrect");
+    assert_eq!(ccs.multisets[3], vec![1, 1], "First cross term incorrect");
+    assert_eq!(ccs.multisets[4], vec![1, 2], "Second cross term incorrect");
+    assert_eq!(ccs.multisets[5], vec![2, 2], "Third cross term incorrect");
 
     // Check linear term multisets
-    assert_eq!(ccs.multisets[3], vec![0], "First linear term incorrect");
-    assert_eq!(ccs.multisets[4], vec![1], "Second linear term incorrect");
-    assert_eq!(ccs.multisets[5], vec![2], "Third linear term incorrect");
+    assert_eq!(ccs.multisets[6], vec![0], "First linear term incorrect");
+    assert_eq!(ccs.multisets[7], vec![1], "Second linear term incorrect");
+    assert_eq!(ccs.multisets[8], vec![2], "Third linear term incorrect");
   }
 
   #[test]

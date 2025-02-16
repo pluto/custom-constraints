@@ -25,6 +25,7 @@ use wasm_bindgen_test::wasm_bindgen_test;
 pub mod ccs;
 pub mod circuit;
 pub mod matrix;
+pub mod noir;
 
 #[cfg(test)]
 mod mock {

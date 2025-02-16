@@ -33,7 +33,7 @@ impl<F: Field + PrimeField> NoirProgram<F> {
     &self.bytecode.unconstrained_functions
   }
 
-  fn generate_circuit(&self) -> Circuit<Building, F> {
+  pub fn generate_circuit(&self) -> Circuit<Building, F> {
     // ------------------------------------------------------------------------------------------------------------ //
     // Set up a circuit with the public and private inputs so the witness input will be (x,w,a)
     let mut circuit = Circuit::new();
@@ -97,52 +97,51 @@ impl<F: Field + PrimeField> NoirProgram<F> {
     circuit
   }
 
-  fn generate_constraints(&self) -> CCS<Plonkish<F>, F> {
-    // let mut witness_map: HashMap<Witness, Variable> = HashMap::new();
+  pub fn generate_constraints(&self) -> CCS<Plonkish<F>, F> {
     let (mut ccs, width) = match self.circuit().expression_width {
-      acir::circuit::ExpressionWidth::Unbounded =>
-        panic!("Can't handle unbounded right now -- not sure what's different though really."),
+      acir::circuit::ExpressionWidth::Unbounded => panic!("Can't handle unbounded right now"),
       acir::circuit::ExpressionWidth::Bounded { width } => (CCS::new_width(width), width),
     };
 
-    // Set up the matrices to have the right number of columns
-    // Admittedly, this is kinda jank and we should handle this better
-    for i in 0..ccs.matrices.len() {
+    // Initialize matrices for all potential witness selections
+    for i in 0..width {
       ccs.matrices[i] = SparseMatrix::new_rows_cols(0, self.circuit().num_vars() as usize);
     }
 
     for opcode in &self.circuit().opcodes {
       if let Opcode::AssertZero(gate) = opcode {
-        // Greedily add a constraint for each opcode (I think this is fine?)
         let constraint_idx = ccs.add_constraint();
-        println!("Added constraint: {constraint_idx}");
-        for (mul_idx, mul_term) in gate.mul_terms.iter().enumerate() {
-          println!("Added mul: {mul_idx}");
-          let i = mul_idx % (width - 1);
-          let j = (mul_idx + 1) % (width - i) + i;
-          // EX:
-          // --> width = 4
-          // mul_idx == 0
-          // --> ( 0 % 3 = 0, (0 + 1) % (4 - 0) + 0 = 1)
-          // mul_idx == 1
-          // --> ( 1 % 3 = 0, (1 + 1) % (4 - 0) + 0 = 2)
-          // mul_idx == 2
-          // --> ( 2 % 3 = 0, (2 + 1) % (4 - 0) + 0 = 3)
-          // mul_idx == 3
-          // --> ( 3 % 3 = 1, (3 + 1) % (4 - 1) + 1 = 2)
-          ccs.set_cross_term(i, j, constraint_idx, mul_term.0.into_repr());
-          ccs.matrices[mul_idx].write_expand(constraint_idx, mul_term.1.as_usize(), F::ONE);
-          ccs.matrices[mul_idx + 1].write_expand(constraint_idx, mul_term.2.as_usize(), F::ONE);
+        println!("Processing constraint {}", constraint_idx);
+
+        // Handle multiplication terms
+        for (q_ij, wi, wj) in &gate.mul_terms {
+          println!("Setting multiplication term: q_{}_{} = {}", wi.as_usize(), wj.as_usize(), q_ij);
+          // Write the coefficient directly - no need for cross-term conversion
+          let i = wi.as_usize();
+          let j = wj.as_usize();
+
+          // Write 1 in the appropriate position in each matrix
+          // Matrix A_i selects witness i
+          ccs.matrices[i].write_expand(constraint_idx, i, F::ONE);
+          // Matrix A_j selects witness j
+          ccs.matrices[j].write_expand(constraint_idx, j, F::ONE);
+
+          // Set the multiplication coefficient
+          ccs.set_multiplication_coefficient(i, j, constraint_idx, q_ij.into_repr());
         }
 
-        for (add_idx, add_term) in gate.linear_combinations.iter().enumerate() {
-          ccs.set_linear(add_idx, constraint_idx, add_term.0.into_repr());
+        // Handle linear terms
+        for (q_i, wi) in &gate.linear_combinations {
+          println!("Setting linear term: q_{} = {}", wi.as_usize(), q_i);
+          let i = wi.as_usize();
+          // Matrix A_i selects witness i
+          ccs.matrices[i].write_expand(constraint_idx, i, F::ONE);
+          // Set the linear coefficient
+          ccs.set_linear(i, constraint_idx, q_i.into_repr());
         }
 
+        // Set constant term
         ccs.set_constant(constraint_idx, gate.q_c.into_repr());
-      }
-      if let Opcode::MemoryInit { .. } | Opcode::MemoryOp { .. } = opcode {
-        panic!("Memory Opcode was used! This is not currently supported.");
       }
     }
     ccs
@@ -159,13 +158,17 @@ mod tests {
   use super::*;
   use crate::circuit::expression::Variable;
 
-  #[test]
-  fn test_width() {
+  fn program() -> NoirProgram<Fr> {
     let json_path = Path::new("./examples/noir/target").join(format!("example.json"));
     dbg!(&json_path);
     let bin = std::fs::read(&json_path).unwrap();
     // TODO: This field might break everything
-    let program = NoirProgram::<Fr>::new(&bin);
+    NoirProgram::<Fr>::new(&bin)
+  }
+
+  #[test]
+  fn test_generate_circuit() {
+    let program = program();
     let circuit = program.generate_circuit();
     println!("\nExpanded forms:");
     for (expr, var) in circuit.expressions() {
@@ -175,5 +178,12 @@ mod tests {
         _ => println!("Other    {} := {}", var, circuit.expand(expr)),
       }
     }
+  }
+
+  #[test]
+  fn test_generate_constraints() {
+    let program = program();
+    let ccs = program.generate_constraints();
+    println!("{ccs}")
   }
 }

@@ -53,7 +53,7 @@
 //! ccs.matrices[2] = a3;
 //!
 //! // Set coefficients
-//! ccs.set_cross_term(0, 1, c, F::ONE); // x * y
+//! ccs.set_multiplication_coefficient(0, 1, c, F::ONE); // x * y
 //! ccs.set_linear(2, c, F::ONE); // + z
 //! ```
 
@@ -72,89 +72,53 @@ impl<F> CCSType<F> for Plonkish<F> {
 
 impl<F: Field> CCS<Plonkish<F>, F> {
   /// Creates a new Plonkish CCS with the specified width.
-  ///
-  /// The width determines the number of selector matrices A_i in the system.
-  /// Each matrix can select different variables from the input vector z.
-  /// Cross terms (multiplications) are only allowed between different matrices.
-  ///
-  /// # Arguments
-  /// * `width` - Number of matrices A_i (must be >= 2)
-  ///
-  /// # Panics
-  /// If width < 2
-  ///
-  /// # Example
-  /// ```
-  /// use custom_constraints::ccs::{plonkish::Plonkish, CCS};
-  /// # use ark_ff::{Field, Fp, MontBackend, MontConfig};
-  /// # #[derive(MontConfig)]
-  /// # #[modulus = "17"]
-  /// # #[generator = "3"]
-  /// # struct FConfig;
-  /// # type F = Fp<MontBackend<FConfig, 1>, 1>;
-  /// let ccs = CCS::<Plonkish<F>, F>::new_width(3);
-  /// ```
+  /// For width n, this creates:
+  /// - n selector matrices A_0 through A_{n-1}
+  /// - Multiplication terms q_{i,j} for i ≤ j
+  /// - Linear terms q_i for each matrix
+  /// - A constant term q_c
   pub fn new_width(width: usize) -> Self {
     assert!(width >= 2, "Width must be at least 2");
-
     let mut ccs = Self::default();
 
-    // Initialize matrices with no rows
+    // Initialize selector matrices
     for _ in 0..width {
       ccs.matrices.push(SparseMatrix::new_rows_cols(0, 0));
     }
 
-    // Set up multisets
+    // Create multisets:
+    // 1. Multiplication terms (i,j) where i ≤ j
     for i in 0..width {
-      for j in (i + 1)..width {
+      for j in i..width {
         ccs.multisets.push(vec![i, j]);
       }
     }
+    // 2. Linear terms
     for i in 0..width {
       ccs.multisets.push(vec![i]);
     }
+    // 3. Constant term
     ccs.multisets.push(vec![]);
 
-    // Initialize selectors with empty vectors
-    let num_cross_terms = (width * (width - 1)) / 2;
-    let num_terms = num_cross_terms + width + 1;
-    ccs.selectors = vec![vec![]; num_terms];
+    // Initialize selector vectors
+    let num_selectors = (width * (width + 1)) / 2 + width + 1;
+    ccs.selectors = vec![vec![]; num_selectors];
 
     ccs
   }
 
   /// Adds a new constraint to the system.
-  ///
-  /// This extends all matrices with a new row and all selectors with a new
-  /// coefficient initialized to zero. The new constraint can then be configured
-  /// using set_cross_term, set_linear, and set_constant.
-  ///
-  /// # Returns
-  /// The index of the new constraint (0-based)
-  ///
-  /// # Example
-  /// ```
-  /// use custom_constraints::ccs::{plonkish::Plonkish, CCS};
-  /// # use ark_ff::{Field, Fp, MontBackend, MontConfig};
-  /// # #[derive(MontConfig)]
-  /// # #[modulus = "17"]
-  /// # #[generator = "3"]
-  /// # struct FConfig;
-  /// # type F = Fp<MontBackend<FConfig, 1>, 1>;
-  /// let mut ccs = CCS::<Plonkish<F>, F>::new_width(2);
-  /// let c1 = ccs.add_constraint(); // First constraint
-  /// let c2 = ccs.add_constraint(); // Second constraint
-  /// ```
+  /// This extends every selector vector with a new zero coefficient.
   pub fn add_constraint(&mut self) -> usize {
     // Get current number of constraints
     let constraint_idx = self.matrices.first().map_or(0, |first| first.dimensions().0);
 
-    // Add a new row to each matrix
+    // Add a new row to each selector matrix
     for matrix in &mut self.matrices {
       matrix.add_row();
     }
 
-    // Add a zero coefficient for each selector
+    // Initialize new constraint coefficients to zero
     for selector in &mut self.selectors {
       selector.push(F::ZERO);
     }
@@ -162,30 +126,29 @@ impl<F: Field> CCS<Plonkish<F>, F> {
     constraint_idx
   }
 
-  /// Sets a cross-term coefficient q_{i,j} for a specific constraint.
-  ///
-  /// This sets the coefficient for the term A_i·z ∘ A_j·z in the specified constraint.
-  ///
-  /// # Arguments
-  /// * `i` - First matrix index
-  /// * `j` - Second matrix index (must be different from i)
-  /// * `constraint_idx` - Index of the constraint to modify
-  /// * `value` - Coefficient value to set
-  ///
-  /// # Panics
-  /// - If i == j (cross terms must be between different matrices)
-  /// - If i or j are out of bounds
-  /// - If constraint_idx is out of bounds
-  pub fn set_cross_term(&mut self, i: usize, j: usize, constraint_idx: usize, value: F) {
-    assert!(i != j, "Cross terms must be between different matrices");
+  /// Sets a multiplication coefficient for a specific constraint.
+  /// In the basic plonkish form q_m ∘ Az ∘ Bz, this generalizes to allow
+  /// multiplication terms between any pair of selector matrices.
+  pub fn set_multiplication_coefficient(
+    &mut self,
+    i: usize,
+    j: usize,
+    constraint_idx: usize,
+    value: F,
+  ) {
     let width = self.matrices.len();
     assert!(i < width && j < width, "Matrix index out of bounds");
 
-    // Ensure i < j for consistent indexing
-    let (i, j) = if i < j { (i, j) } else { (j, i) };
+    // Ensure i ≤ j for consistent indexing
+    let (i, j) = if i <= j { (i, j) } else { (j, i) };
 
-    // Calculate index for the cross term
-    let idx = (i * (2 * width - i - 1)) / 2 + (j - i - 1);
+    // Calculate index for (i,j) pair
+    // For each row k, we have (width-k) terms starting with (k,k)
+    let idx = (i * (2 * width - i + 1)) / 2 + (j - i);
+
+    println!("Setting multiplication coefficient:");
+    println!("  Original (i,j): ({},{})", i, j);
+    println!("  Mapped to idx: {}", idx);
 
     if let Some(selector) = self.selectors.get_mut(idx) {
       if let Some(coeff) = selector.get_mut(constraint_idx) {
@@ -194,38 +157,30 @@ impl<F: Field> CCS<Plonkish<F>, F> {
     }
   }
 
-  /// Sets a linear term coefficient q_i for a specific constraint.
-  ///
-  /// This sets the coefficient for the term A_i·z in the specified constraint.
-  ///
-  /// # Arguments
-  /// * `i` - Matrix index
-  /// * `constraint_idx` - Index of the constraint to modify
-  /// * `value` - Coefficient value to set
-  ///
-  /// # Panics
-  /// - If i is out of bounds
-  /// - If constraint_idx is out of bounds
+  /// Sets a linear term coefficient for a specific constraint.
+  /// This generalizes terms like q_l ∘ Az to allow linear terms
+  /// for any selector matrix.
   pub fn set_linear(&mut self, i: usize, constraint_idx: usize, value: F) {
     let width = self.matrices.len();
     assert!(i < width, "Matrix index out of bounds");
 
-    let num_cross_terms = (width * (width - 1)) / 2;
-    if let Some(selector) = self.selectors.get_mut(num_cross_terms + i) {
+    let num_mul_terms = (width * (width + 1)) / 2;
+    let idx = num_mul_terms + i;
+
+    println!("Setting linear coefficient:");
+    println!("  i: {}", i);
+    println!("  num_mul_terms: {}", num_mul_terms);
+    println!("  final idx: {}", idx);
+
+    if let Some(selector) = self.selectors.get_mut(idx) {
       if let Some(coeff) = selector.get_mut(constraint_idx) {
         *coeff = value;
       }
     }
   }
 
-  /// Sets the constant term q_c for a specific constraint.
-  ///
-  /// # Arguments
-  /// * `constraint_idx` - Index of the constraint to modify
-  /// * `value` - Constant value to set
-  ///
-  /// # Panics
-  /// If constraint_idx is out of bounds
+  /// Sets the constant term for a specific constraint.
+  /// This corresponds to q_c in the basic plonkish form.
   pub fn set_constant(&mut self, constraint_idx: usize, value: F) {
     if let Some(selector) = self.selectors.last_mut() {
       if let Some(coeff) = selector.get_mut(constraint_idx) {
@@ -234,28 +189,15 @@ impl<F: Field> CCS<Plonkish<F>, F> {
     }
   }
 
-  /// Helper to calculate number of cross terms
-  fn num_cross_terms(&self) -> usize {
-    let width = self.matrices.len();
-    (width * (width - 1)) / 2
-  }
-
-  /// Checks if a witness and public input satisfy the Plonkish constraint system.
-  /// The constraint has the form:
-  /// sum_{i<j} q_{i,j} (A_i z o A_j z) + sum_i q_i (A_i z) + q_c = 0
-  ///
-  /// # Arguments
-  /// * `x` - The public input vector
-  /// * `w` - The witness vector
-  ///
-  /// # Returns
-  /// `true` if all constraints are satisfied, `false` otherwise
-  // New method to set constant term
+  /// Checks if a witness and public input satisfy the constraint system.
+  /// For width n, evaluates constraints of the form:
+  /// sum_{i≤j} q_{i,j} (A_i z ∘ A_j z) + sum_i q_i (A_i z) + q_c = 0
   pub fn is_satisfied(&self, x: &[F], w: &[F]) -> bool {
     let mut z = Vec::with_capacity(x.len() + w.len());
     z.extend(x.iter().copied());
     z.extend(w.iter().copied());
 
+    // Calculate matrix-vector products for each selector matrix
     let products: Vec<Vec<F>> = self
       .matrices
       .iter()
@@ -267,45 +209,41 @@ impl<F: Field> CCS<Plonkish<F>, F> {
       })
       .collect();
 
-    let m = if let Some(first) = products.first() {
-      first.len()
-    } else {
+    // If no constraints, system is trivially satisfied
+    let num_constraints = products.first().map_or(0, |v| v.len());
+    if num_constraints == 0 {
       return true;
-    };
+    }
 
-    for row in 0..m {
+    let width = self.matrices.len();
+
+    // Check each constraint
+    for row in 0..num_constraints {
       let mut sum = F::ZERO;
-      let width = self.matrices.len();
-      let mut term_idx = 0;
+      let mut selector_idx = 0;
 
-      // Process quadratic terms (i < j)
+      // Evaluate multiplication terms (i ≤ j)
       for i in 0..width {
-        for j in (i + 1)..width {
-          if let Some(selector) = self.selectors.get(term_idx) {
+        for j in i..width {
+          if let Some(selector) = self.selectors.get(selector_idx) {
             let term = products[i][row] * products[j][row];
-            for &coeff in selector {
-              sum += coeff * term;
-            }
+            sum += selector[row] * term;
           }
-          term_idx += 1;
+          selector_idx += 1;
         }
       }
 
-      // Process linear terms
-      products.iter().take(width).zip(self.selectors.iter().skip(self.num_cross_terms())).for_each(
-        |(product, selector)| {
-          let term = product[row];
-          for &coeff in selector {
-            sum += coeff * term;
-          }
-        },
-      );
+      // Evaluate linear terms
+      for i in 0..width {
+        if let Some(selector) = self.selectors.get(selector_idx) {
+          sum += selector[row] * products[i][row];
+        }
+        selector_idx += 1;
+      }
 
       // Add constant term
       if let Some(selector) = self.selectors.last() {
-        for &coeff in selector {
-          sum += coeff;
-        }
+        sum += selector[row];
       }
 
       println!("Row {row}: sum = {sum:?}");
@@ -320,12 +258,10 @@ impl<F: Field> CCS<Plonkish<F>, F> {
 
 impl<F: Field + Display> Display for CCS<Plonkish<F>, F> {
   fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-    let width = self.matrices.len();
-
-    writeln!(f, "Plonkish Constraint System (width = {width}):")?;
+    writeln!(f, "Plonkish Constraint System (width = {}):\n", self.matrices.len())?;
 
     // Display matrices
-    writeln!(f, "\nMatrices:")?;
+    writeln!(f, "Matrices:")?;
     for (i, matrix) in self.matrices.iter().enumerate() {
       writeln!(f, "A_{i} =")?;
       writeln!(f, "{matrix}")?;
@@ -333,61 +269,62 @@ impl<F: Field + Display> Display for CCS<Plonkish<F>, F> {
 
     // Display selectors
     writeln!(f, "\nSelectors:")?;
-    let mut term_idx = 0;
+    let width = self.matrices.len();
+    let mut idx = 0;
 
-    // Display cross term selectors
+    // Display multiplication term selectors
     for i in 0..width {
-      for j in (i + 1)..width {
-        if let Some(selector) = self.selectors.get(term_idx) {
-          write!(f, "q_{i},{j} = [")?;
-          for (idx, &coeff) in selector.iter().enumerate() {
-            if idx > 0 {
+      for j in i..width {
+        write!(f, "q_{i},{j} = [")?;
+        if let Some(selector) = self.selectors.get(idx) {
+          for (k, &coeff) in selector.iter().enumerate() {
+            if k > 0 {
               write!(f, ", ")?;
             }
             write!(f, "{coeff}")?;
           }
-          writeln!(f, "]")?;
         }
-        term_idx += 1;
+        writeln!(f, "]")?;
+        idx += 1;
       }
     }
 
     // Display linear term selectors
     for i in 0..width {
-      if let Some(selector) = self.selectors.get(term_idx) {
-        write!(f, "q_{i} = [")?;
-        for (idx, &coeff) in selector.iter().enumerate() {
-          if idx > 0 {
+      write!(f, "q_{i} = [")?;
+      if let Some(selector) = self.selectors.get(idx) {
+        for (k, &coeff) in selector.iter().enumerate() {
+          if k > 0 {
             write!(f, ", ")?;
           }
           write!(f, "{coeff}")?;
         }
-        writeln!(f, "]")?;
       }
-      term_idx += 1;
+      writeln!(f, "]")?;
+      idx += 1;
     }
 
+    // Display constant term
+    write!(f, "q_c = [")?;
     if let Some(selector) = self.selectors.last() {
-      write!(f, "q_c = [")?;
-      for (idx, &coeff) in selector.iter().enumerate() {
-        if idx > 0 {
+      for (k, &coeff) in selector.iter().enumerate() {
+        if k > 0 {
           write!(f, ", ")?;
         }
         write!(f, "{coeff}")?;
       }
-      writeln!(f, "]")?;
     }
+    writeln!(f, "]")?;
 
     // Display constraint equation
     writeln!(f, "\nConstraint equation:")?;
-
     let mut first_term = true;
-    term_idx = 0;
 
-    // Display cross terms (i != j)
+    // Write multiplication terms
+    idx = 0;
     for i in 0..width {
-      for j in (i + 1)..width {
-        if let Some(selector) = self.selectors.get(term_idx) {
+      for j in i..width {
+        if let Some(selector) = self.selectors.get(idx) {
           if !selector.iter().all(|&x| x == F::ZERO) {
             if !first_term {
               write!(f, " + ")?;
@@ -396,13 +333,13 @@ impl<F: Field + Display> Display for CCS<Plonkish<F>, F> {
             first_term = false;
           }
         }
-        term_idx += 1;
+        idx += 1;
       }
     }
 
-    // Display linear terms
+    // Write linear terms
     for i in 0..width {
-      if let Some(selector) = self.selectors.get(term_idx) {
+      if let Some(selector) = self.selectors.get(idx) {
         if !selector.iter().all(|&x| x == F::ZERO) {
           if !first_term {
             write!(f, " + ")?;
@@ -411,11 +348,17 @@ impl<F: Field + Display> Display for CCS<Plonkish<F>, F> {
           first_term = false;
         }
       }
-      term_idx += 1;
+      idx += 1;
     }
 
-    if self.selectors.last().is_some() {
-      write!(f, " + q_c")?;
+    // Write constant term if non-zero
+    if let Some(selector) = self.selectors.last() {
+      if !selector.iter().all(|&x| x == F::ZERO) {
+        if !first_term {
+          write!(f, " + ")?;
+        }
+        write!(f, "q_c")?;
+      }
     }
 
     writeln!(f, " = 0")?;
@@ -468,7 +411,7 @@ mod tests {
     ccs.matrices[1] = a2;
 
     // Set some coefficients
-    ccs.set_cross_term(0, 1, 0, F17::from(3)); // 3(A_1·z)(A_2·z)
+    ccs.set_multiplication_coefficient(0, 1, 0, F17::from(3)); // 3(A_1·z)(A_2·z)
     ccs.set_linear(0, 0, F17::from(4)); // 4(A_1·z)
     ccs.set_linear(1, 0, F17::from(5)); // 5(A_2·z)
 
@@ -493,7 +436,7 @@ mod tests {
     ccs.matrices[1] = a2;
 
     // Set coefficients
-    ccs.set_cross_term(0, 1, 0, F17::ONE); // 1 * (x * y)
+    ccs.set_multiplication_coefficient(0, 1, 0, F17::ONE); // 1 * (x * y)
     ccs.set_linear(0, 0, F17::from(2)); // + 2x
     ccs.set_linear(1, 0, F17::from(3)); // + 3y
     ccs.set_constant(0, F17::from(8)); // + 4
@@ -543,7 +486,7 @@ mod tests {
     ccs.matrices[1] = a2;
 
     // Set coefficients
-    ccs.set_cross_term(0, 1, 0, F17::ONE); // x * y
+    ccs.set_multiplication_coefficient(0, 1, 0, F17::ONE); // x * y
     ccs.set_constant(0, F17::ONE); // + 1
 
     println!("ccs: {ccs}");
@@ -577,9 +520,9 @@ mod tests {
     ccs.matrices[2] = a2;
 
     // Set cross terms
-    ccs.set_cross_term(0, 1, 0, F17::ONE); // x * y
-    ccs.set_cross_term(1, 2, 0, F17::ONE); // y * z
-    ccs.set_cross_term(0, 2, 0, F17::ONE); // x * z
+    ccs.set_multiplication_coefficient(0, 1, 0, F17::ONE); // x * y
+    ccs.set_multiplication_coefficient(1, 2, 0, F17::ONE); // y * z
+    ccs.set_multiplication_coefficient(0, 2, 0, F17::ONE); // x * z
 
     // Set linear terms
     ccs.set_linear(0, 0, F17::from(2)); // 2x
@@ -650,12 +593,12 @@ mod tests {
     ccs.matrices[2] = a3;
 
     // Set coefficients for first constraint: x * y + z + 12 = 0
-    ccs.set_cross_term(0, 1, c1, F17::ONE); // x * y
+    ccs.set_multiplication_coefficient(0, 1, c1, F17::ONE); // x * y
     ccs.set_linear(2, c1, F17::ONE); // + z
     ccs.set_constant(c1, F17::from(12)); // + 12
 
     // Set coefficients for second constraint: y * z + x + 10 = 0
-    ccs.set_cross_term(1, 2, c2, F17::ONE); // y * z
+    ccs.set_multiplication_coefficient(1, 2, c2, F17::ONE); // y * z
     ccs.set_linear(0, c2, F17::ONE); // + x
     ccs.set_constant(c2, F17::from(10)); // + 10
 

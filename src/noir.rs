@@ -27,12 +27,16 @@
 //! let ccs = program.generate_constraints();
 //! ```
 
+// NOTE: This is required for Noir to work right basically.
+use ark_bn254::Fr;
+
 use acvm::acir::{
   self,
   acir_field::GenericFieldElement,
   circuit::{brillig::BrilligBytecode, Opcode, Program},
+  native_types::WitnessMap,
 };
-use ark_ff::PrimeField;
+use ark_ff::{AdditiveGroup, PrimeField};
 use serde::{Deserialize, Serialize};
 
 use super::*;
@@ -47,32 +51,34 @@ use crate::{
 /// and provides methods to convert it into our circuit and constraint system
 /// representations.
 #[derive(Clone, Serialize, Deserialize, Debug)]
-pub struct NoirProgram<F: Field + PrimeField> {
+pub struct NoirProgram {
   /// Raw bytecode for the Noir circuit
   #[serde(
     serialize_with = "Program::serialize_program_base64",
     deserialize_with = "Program::deserialize_program_base64"
   )]
-  pub bytecode: Program<GenericFieldElement<F>>,
+  pub bytecode: Program<GenericFieldElement<Fr>>,
 }
 
-impl<F: Field + PrimeField> NoirProgram<F> {
+impl NoirProgram {
   /// Creates a new [`NoirProgram`] from serialized bytecode.
   ///
   /// # Arguments
   /// * `bin` - Serialized program bytes (typically from a .json file)
-  pub fn new(bin: &[u8]) -> Self { serde_json::from_slice(bin).unwrap() }
+  pub fn new(bin: &[u8]) -> Self {
+    serde_json::from_slice(bin).unwrap()
+  }
 
   /// Returns the main circuit from the program.
   ///
   /// Noir programs can contain multiple functions, but we're primarily
   /// interested in the main circuit (functions[0]).
-  pub fn circuit(&self) -> &acir::circuit::Circuit<GenericFieldElement<F>> {
+  pub fn circuit(&self) -> &acir::circuit::Circuit<GenericFieldElement<Fr>> {
     &self.bytecode.functions[0]
   }
 
   /// Returns any unconstrained functions in the program.
-  pub fn unconstrained_functions(&self) -> &Vec<BrilligBytecode<GenericFieldElement<F>>> {
+  pub fn unconstrained_functions(&self) -> &Vec<BrilligBytecode<GenericFieldElement<Fr>>> {
     &self.bytecode.unconstrained_functions
   }
 
@@ -83,7 +89,7 @@ impl<F: Field + PrimeField> NoirProgram<F> {
   /// 2. Multiplication terms allow quadratic constraints
   /// 3. Linear terms capture direct variable usage
   /// 4. Constant terms complete the constraints
-  pub fn generate_constraints(&self) -> CCS<Plonkish<F>, F> {
+  pub fn generate_constraints(&self) -> CCS<Plonkish<Fr>, Fr> {
     let (mut ccs, width) = match self.circuit().expression_width {
       acir::circuit::ExpressionWidth::Unbounded => panic!("Unbounded width not supported"),
       acir::circuit::ExpressionWidth::Bounded { width } => (CCS::new_width(width), width),
@@ -105,8 +111,8 @@ impl<F: Field + PrimeField> NoirProgram<F> {
           let j = wj.as_usize();
 
           // Set up selector matrices
-          ccs.matrices[i].write_expand(constraint_idx, i, F::ONE);
-          ccs.matrices[j].write_expand(constraint_idx, j, F::ONE);
+          ccs.matrices[i].write_expand(constraint_idx, i, Fr::ONE);
+          ccs.matrices[j].write_expand(constraint_idx, j, Fr::ONE);
 
           // Set multiplication coefficient
           ccs.set_multiplication_coefficient(i, j, constraint_idx, q_ij.into_repr());
@@ -115,7 +121,7 @@ impl<F: Field + PrimeField> NoirProgram<F> {
         // Handle linear terms
         for (q_i, wi) in &gate.linear_combinations {
           let i = wi.as_usize();
-          ccs.matrices[i].write_expand(constraint_idx, i, F::ONE);
+          ccs.matrices[i].write_expand(constraint_idx, i, Fr::ONE);
           ccs.set_linear(i, constraint_idx, q_i.into_repr());
         }
 
@@ -125,20 +131,47 @@ impl<F: Field + PrimeField> NoirProgram<F> {
     }
     ccs
   }
+
+  pub fn solve(
+    &self,
+    public_inputs: Vec<Fr>,
+    private_inputs: Vec<Fr>,
+  ) -> WitnessMap<GenericFieldElement<Fr>> {
+    let mut acvm = acvm::pwg::ACVM::new(
+      &acvm::blackbox_solver::StubbedBlackBoxSolver(false),
+      &self.circuit().opcodes,
+      acir::native_types::WitnessMap::new(),
+      self.unconstrained_functions(),
+      &[],
+    );
+
+    self.circuit().public_parameters.0.iter().for_each(|witness| {
+      let f = GenericFieldElement::<Fr>::from_repr(public_inputs[witness.as_usize()]);
+      acvm.overwrite_witness(*witness, f);
+    });
+
+    // write witness values for external_inputs
+    self.circuit().private_parameters.iter().for_each(|witness| {
+      let idx = dbg!(witness.as_usize()) - dbg!(public_inputs.len());
+
+      let f = GenericFieldElement::<Fr>::from_repr(private_inputs[idx]);
+      acvm.overwrite_witness(*witness, f);
+    });
+    let _status = acvm.solve();
+    acvm.finalize()
+  }
 }
 
 #[cfg(test)]
 mod tests {
   use std::path::Path;
 
-  use ark_bn254::Fr;
-
   use super::*;
 
-  fn program() -> NoirProgram<Fr> {
+  fn program() -> NoirProgram {
     let json_path = Path::new("./tests/fixtures/example.json");
     let bin = std::fs::read(json_path).unwrap();
-    NoirProgram::<Fr>::new(&bin)
+    NoirProgram::new(&bin)
   }
 
   /// Tests conversion of a Noir program to our constraint system

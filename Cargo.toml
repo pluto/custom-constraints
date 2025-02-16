@@ -16,7 +16,9 @@ default = []
 
 [dependencies]
 # Should be behind a feat so we can still publish (or use crates version of ACVM?)
-acvm       = { git = "https://github.com/noir-lang/noir" }
+acvm = { git = "https://github.com/noir-lang/noir" }
+# Needed as the default field that Noir uses
+ark-bn254  = { version = "0.5" }
 serde      = { version = "1.0" }
 serde_json = { version = "1.0" }
 
@@ -31,8 +33,7 @@ ark-ff = { version = "0.5", default-features = false, features = ["parallel"] }
 getrandom = { version = "0.2", features = ["js"] }
 
 [dev-dependencies]
-ark-bn254 = { version = "0.5" }
-ark-std   = { version = "0.5", default-features = false, features = ["std"] }
+ark-std = { version = "0.5", default-features = false, features = ["std"] }
 # Need `rand` 0.8 to overwrite the features since other crates use this now.
 rand   = { version = "0.8" }
 rstest = { version = "0.24", default-features = false }

@@ -27,14 +27,15 @@ ark-ff = { version = "0.5", features = ["parallel", "asm"] }
 ark-ff = { version = "0.5", default-features = false, features = ["parallel"] }
 
 [dev-dependencies]
-ark-bn254     = { version = "0.5" }
-ark-serialize = { version = "0.5" }
-ark-std       = { version = "0.5", default-features = false, features = ["std"] }
-rand          = "0.9"
-rstest        = { version = "0.24", default-features = false }
+ark-bn254 = { version = "0.5" }
+ark-std   = { version = "0.5", default-features = false, features = ["std"] }
+# Need `rand` 0.8 to overwrite the features since other crates use this now.
+rand   = { version = "0.8" }
+rstest = { version = "0.24", default-features = false }
 
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]
-getrandom         = { version = "0.3", features = ["wasm_js"] }
+# Need `getrandom` 0.2 to overwrite the features since other crates use this now.
+getrandom         = { version = "0.2", features = ["js"] }
 wasm-bindgen      = { version = "0.2" }
 wasm-bindgen-test = { version = "0.3" }
 

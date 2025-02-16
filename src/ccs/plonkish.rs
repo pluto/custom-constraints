@@ -1,29 +1,46 @@
 //! PLONK-style Customizable Constraint Systems (CCS).
 //!
-//! This module implements a variant of CCS that follows the PLONK (Permutations over
-//! Lagrange-bases for Oecumenical Noninteractive arguments of Knowledge) design pattern.
+//! This module implements a specialized variant of CCS that builds on the PLONK
+//! (Permutations over Lagrange-bases for Oecumenical Noninteractive arguments of Knowledge)
+//! design pattern. The system represents arithmetic constraints using selector matrices
+//! and coefficient vectors that work together to create polynomial equations.
+//!
 //! The constraint system has the form:
 //!
 //! ```text
-//! sum_{i<j} q_{i,j} (A_i z ∘ A_j z) + sum_i q_i (A_i z) + q_c = 0
+//! sum_{i≤j} q_{i,j} (A_i z ∘ A_j z) + sum_i q_i (A_i z) + q_c = 0
 //! ```
 //!
 //! where:
-//! - `q_{i,j}` are cross-term selector vectors
-//! - `q_i` are linear-term selector vectors
-//! - `q_c` is the constant term selector vector
-//! - `A_i` are the selector matrices
-//! - `z` is the input vector (public inputs and witness)
-//! - `∘` denotes the Hadamard (element-wise) product
+//! - A_i are selector matrices that each extract specific variables from the input vector z
+//! - q_{i,j} are coefficient vectors for multiplication terms between any two selector matrices
+//! - q_i are coefficient vectors for linear terms from each selector matrix
+//! - q_c is a coefficient vector for constant terms
+//! - z is the combined input vector containing both public inputs and witness values
+//! - ∘ denotes the Hadamard (element-wise) product between vectors
+//!
+//! Each selector matrix A_i determines which variables participate in the constraint system.
+//! The multiplication terms q_{i,j} allow creating products between any two selected variables,
+//! while the linear terms q_i allow direct use of selected variables. The constant term q_c
+//! completes the polynomial.
+//!
+//! For example, with a width of 4, we can create constraints involving:
+//! - Multiplication terms: Any product x_i * x_j where i ≤ j
+//! - Linear terms: Any variable x_i by itself
+//! - Constants: Added directly to the equation
 //!
 //! # Features
-//! - Support for multiple constraints
-//! - Quadratic terms between different selector matrices
-//! - Linear terms for each selector matrix
+//! - Flexible constraint creation through selector matrices
+//! - Support for arbitrary width constraint systems
+//! - Multiplication terms between any pair of selected variables
+//! - Linear terms for direct variable use
 //! - Constant terms for each constraint
+//! - Multiple constraints sharing the same structure
 //!
 //! # Example
-//! ```
+//! Here's how to create a system for the constraint x * y + z = 0:
+//!
+//! ```rust
 //! use custom_constraints::{
 //!   ccs::{plonkish::Plonkish, CCS},
 //!   matrix::SparseMatrix,
@@ -35,7 +52,7 @@
 //! # struct FConfig;
 //! # type F = Fp<MontBackend<FConfig, 1>, 1>;
 //!
-//! // Create a system for the constraint x * y + z = 0
+//! // Create a width-3 system (allowing up to 3 variables per constraint)
 //! let mut ccs = CCS::<Plonkish<F>, F>::new_width(3);
 //! let c = ccs.add_constraint();
 //!
@@ -52,10 +69,16 @@
 //! a3.write(0, 2, F::ONE); // Select z
 //! ccs.matrices[2] = a3;
 //!
-//! // Set coefficients
-//! ccs.set_multiplication_coefficient(0, 1, c, F::ONE); // x * y
-//! ccs.set_linear(2, c, F::ONE); // + z
+//! // Set coefficients to create x * y + z = 0
+//! ccs.set_multiplication_coefficient(0, 1, c, F::ONE); // x * y term
+//! ccs.set_linear(2, c, F::ONE); // z term
 //! ```
+//!
+//! This creates a system where:
+//! 1. A₁ selects the x variable
+//! 2. A₂ selects the y variable
+//! 3. A₃ selects the z variable
+//! 4. The coefficients combine these to form x * y + z = 0
 
 use super::*;
 
@@ -71,12 +94,40 @@ impl<F> CCSType<F> for Plonkish<F> {
 }
 
 impl<F: Field> CCS<Plonkish<F>, F> {
-  /// Creates a new Plonkish CCS with the specified width.
-  /// For width n, this creates:
-  /// - n selector matrices A_0 through A_{n-1}
-  /// - Multiplication terms q_{i,j} for i ≤ j
-  /// - Linear terms q_i for each matrix
-  /// - A constant term q_c
+  /// Creates a new PLONK-style constraint system with the specified width.
+  ///
+  /// The width parameter determines how many selector matrices and corresponding
+  /// terms are created in the system. For a width n, the system will have:
+  /// - n selector matrices A_0 through A_{n-1}, each capable of selecting variables from the input
+  ///   vector
+  /// - Multiplication terms q_{i,j} for all pairs where i ≤ j, allowing products between any two
+  ///   (possibly same) selected variables
+  /// - Linear terms q_i for each selector matrix, allowing direct use of selected variables
+  /// - A constant term q_c that adds field elements to constraints
+  ///
+  /// # Arguments
+  /// * `width` - Number of selector matrices to create (must be ≥ 2)
+  ///
+  /// # Panics
+  /// Panics if width < 2, as PLONK-style systems need at least two matrices
+  /// for multiplication terms
+  ///
+  /// # Examples
+  /// ```
+  /// # use custom_constraints::ccs::{plonkish::Plonkish, CCS};
+  /// # use ark_ff::{Field, Fp, MontBackend, MontConfig};
+  /// # #[derive(MontConfig)]
+  /// # #[modulus = "17"]
+  /// # #[generator = "3"]
+  /// # struct FConfig;
+  /// # type F = Fp<MontBackend<FConfig, 1>, 1>;
+  /// let ccs = CCS::<Plonkish<F>, F>::new_width(3);
+  /// // Creates a system with:
+  /// // - 3 selector matrices
+  /// // - 6 multiplication terms (0,0), (0,1), (0,2), (1,1), (1,2), (2,2)
+  /// // - 3 linear terms
+  /// // - 1 constant term
+  /// ```
   pub fn new_width(width: usize) -> Self {
     assert!(width >= 2, "Width must be at least 2");
     let mut ccs = Self::default();
@@ -86,7 +137,7 @@ impl<F: Field> CCS<Plonkish<F>, F> {
       ccs.matrices.push(SparseMatrix::new_rows_cols(0, 0));
     }
 
-    // Create multisets:
+    // Create multisets for all possible terms:
     // 1. Multiplication terms (i,j) where i ≤ j
     for i in 0..width {
       for j in i..width {
@@ -100,7 +151,7 @@ impl<F: Field> CCS<Plonkish<F>, F> {
     // 3. Constant term
     ccs.multisets.push(vec![]);
 
-    // Initialize selector vectors
+    // Initialize selector vectors for all terms
     let num_selectors = (width * (width + 1)) / 2 + width + 1;
     ccs.selectors = vec![vec![]; num_selectors];
 
@@ -108,7 +159,31 @@ impl<F: Field> CCS<Plonkish<F>, F> {
   }
 
   /// Adds a new constraint to the system.
-  /// This extends every selector vector with a new zero coefficient.
+  ///
+  /// This method:
+  /// 1. Adds a new row to each selector matrix
+  /// 2. Extends each selector vector with a zero coefficient
+  ///
+  /// The new constraint starts with all zero coefficients and can be configured
+  /// using set_multiplication_coefficient, set_linear, and set_constant.
+  ///
+  /// # Returns
+  /// The index of the new constraint, which can be used in subsequent coefficient
+  /// setting operations
+  ///
+  /// # Examples
+  /// ```
+  /// # use custom_constraints::ccs::{plonkish::Plonkish, CCS};
+  /// # use ark_ff::{Field, Fp, MontBackend, MontConfig};
+  /// # #[derive(MontConfig)]
+  /// # #[modulus = "17"]
+  /// # #[generator = "3"]
+  /// # struct FConfig;
+  /// # type F = Fp<MontBackend<FConfig, 1>, 1>;
+  /// let mut ccs = CCS::<Plonkish<F>, F>::new_width(2);
+  /// let c1 = ccs.add_constraint(); // First constraint
+  /// let c2 = ccs.add_constraint(); // Second constraint
+  /// ```
   pub fn add_constraint(&mut self) -> usize {
     // Get current number of constraints
     let constraint_idx = self.matrices.first().map_or(0, |first| first.dimensions().0);
@@ -127,8 +202,22 @@ impl<F: Field> CCS<Plonkish<F>, F> {
   }
 
   /// Sets a multiplication coefficient for a specific constraint.
-  /// In the basic plonkish form q_m ∘ Az ∘ Bz, this generalizes to allow
-  /// multiplication terms between any pair of selector matrices.
+  ///
+  /// This creates a term q_{i,j} * (A_i z ∘ A_j z) in the constraint equation,
+  /// where:
+  /// - q_{i,j} is the coefficient being set
+  /// - A_i and A_j are selector matrices
+  /// - z is the input vector
+  /// - ∘ denotes the Hadamard (element-wise) product
+  ///
+  /// # Arguments
+  /// * `i` - First matrix index
+  /// * `j` - Second matrix index
+  /// * `constraint_idx` - Which constraint to modify
+  /// * `value` - Coefficient value to set
+  ///
+  /// # Panics
+  /// Panics if i or j are out of bounds for the system's width
   pub fn set_multiplication_coefficient(
     &mut self,
     i: usize,
@@ -146,10 +235,6 @@ impl<F: Field> CCS<Plonkish<F>, F> {
     // For each row k, we have (width-k) terms starting with (k,k)
     let idx = (i * (2 * width - i + 1)) / 2 + (j - i);
 
-    println!("Setting multiplication coefficient:");
-    println!("  Original (i,j): ({},{})", i, j);
-    println!("  Mapped to idx: {}", idx);
-
     if let Some(selector) = self.selectors.get_mut(idx) {
       if let Some(coeff) = selector.get_mut(constraint_idx) {
         *coeff = value;
@@ -158,19 +243,26 @@ impl<F: Field> CCS<Plonkish<F>, F> {
   }
 
   /// Sets a linear term coefficient for a specific constraint.
-  /// This generalizes terms like q_l ∘ Az to allow linear terms
-  /// for any selector matrix.
+  ///
+  /// This creates a term q_i * (A_i z) in the constraint equation,
+  /// where:
+  /// - q_i is the coefficient being set
+  /// - A_i is a selector matrix
+  /// - z is the input vector
+  ///
+  /// # Arguments
+  /// * `i` - Matrix index
+  /// * `constraint_idx` - Which constraint to modify
+  /// * `value` - Coefficient value to set
+  ///
+  /// # Panics
+  /// Panics if i is out of bounds for the system's width
   pub fn set_linear(&mut self, i: usize, constraint_idx: usize, value: F) {
     let width = self.matrices.len();
     assert!(i < width, "Matrix index out of bounds");
 
     let num_mul_terms = (width * (width + 1)) / 2;
     let idx = num_mul_terms + i;
-
-    println!("Setting linear coefficient:");
-    println!("  i: {}", i);
-    println!("  num_mul_terms: {}", num_mul_terms);
-    println!("  final idx: {}", idx);
 
     if let Some(selector) = self.selectors.get_mut(idx) {
       if let Some(coeff) = selector.get_mut(constraint_idx) {
@@ -180,7 +272,13 @@ impl<F: Field> CCS<Plonkish<F>, F> {
   }
 
   /// Sets the constant term for a specific constraint.
-  /// This corresponds to q_c in the basic plonkish form.
+  ///
+  /// The constant term q_c is added directly to the constraint equation
+  /// without any variable interaction.
+  ///
+  /// # Arguments
+  /// * `constraint_idx` - Which constraint to modify
+  /// * `value` - Constant value to set
   pub fn set_constant(&mut self, constraint_idx: usize, value: F) {
     if let Some(selector) = self.selectors.last_mut() {
       if let Some(coeff) = selector.get_mut(constraint_idx) {
@@ -189,25 +287,27 @@ impl<F: Field> CCS<Plonkish<F>, F> {
     }
   }
 
-  /// Checks if a witness and public input satisfy the constraint system.
-  /// For width n, evaluates constraints of the form:
+  /// Checks if a witness and public input satisfy all constraints in the system.
+  ///
+  /// For each constraint, evaluates the equation:
+  /// ```text
   /// sum_{i≤j} q_{i,j} (A_i z ∘ A_j z) + sum_i q_i (A_i z) + q_c = 0
+  /// ```
+  /// where z is the concatenation of public inputs x and witness values w.
+  ///
+  /// # Arguments
+  /// * `x` - Public input values
+  /// * `w` - Witness values
+  ///
+  /// # Returns
+  /// `true` if all constraints evaluate to zero, `false` otherwise
   pub fn is_satisfied(&self, x: &[F], w: &[F]) -> bool {
     let mut z = Vec::with_capacity(x.len() + w.len());
     z.extend(x.iter().copied());
     z.extend(w.iter().copied());
 
     // Calculate matrix-vector products for each selector matrix
-    let products: Vec<Vec<F>> = self
-      .matrices
-      .iter()
-      .enumerate()
-      .map(|(i, matrix)| {
-        let result = matrix * &z;
-        println!("A_{i}·z = {result:?}");
-        result
-      })
-      .collect();
+    let products: Vec<Vec<F>> = self.matrices.iter().map(|matrix| matrix * &z).collect();
 
     // If no constraints, system is trivially satisfied
     let num_constraints = products.first().map_or(0, |v| v.len());
@@ -234,19 +334,17 @@ impl<F: Field> CCS<Plonkish<F>, F> {
       }
 
       // Evaluate linear terms
-      for i in 0..width {
-        if let Some(selector) = self.selectors.get(selector_idx) {
-          sum += selector[row] * products[i][row];
-        }
-        selector_idx += 1;
-      }
+      products.iter().take(width).zip(self.selectors.iter().skip(selector_idx)).for_each(
+        |(product, selector)| {
+          sum += selector[row] * product[row];
+        },
+      );
 
       // Add constant term
       if let Some(selector) = self.selectors.last() {
         sum += selector[row];
       }
 
-      println!("Row {row}: sum = {sum:?}");
       if sum != F::ZERO {
         return false;
       }

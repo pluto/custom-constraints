@@ -145,6 +145,9 @@ impl NoirProgram {
       &[],
     );
 
+    dbg!(self.circuit().public_parameters.0.len());
+    dbg!(self.circuit().private_parameters.len());
+
     self.circuit().public_parameters.0.iter().for_each(|witness| {
       let f = GenericFieldElement::<Fr>::from_repr(public_inputs[witness.as_usize()]);
       acvm.overwrite_witness(*witness, f);
@@ -152,7 +155,7 @@ impl NoirProgram {
 
     // write witness values for external_inputs
     self.circuit().private_parameters.iter().for_each(|witness| {
-      let idx = dbg!(witness.as_usize()) - dbg!(public_inputs.len());
+      let idx = witness.as_usize() - public_inputs.len();
 
       let f = GenericFieldElement::<Fr>::from_repr(private_inputs[idx]);
       acvm.overwrite_witness(*witness, f);
@@ -160,6 +163,26 @@ impl NoirProgram {
     let _status = acvm.solve();
     acvm.finalize()
   }
+
+  pub fn is_satisfied(&self, public_inputs: Vec<Fr>, private_inputs: Vec<Fr>) -> bool {
+    let ccs = self.generate_constraints();
+    let witness = self.solve(public_inputs, private_inputs);
+    let witness = witness_map_as_vec(witness);
+    ccs.is_satisfied(&[], &witness)
+  }
+}
+
+fn witness_map_as_vec(witness_map: WitnessMap<GenericFieldElement<Fr>>) -> Vec<Fr> {
+  // Find the maximum witness index to determine vector size
+  let pairs: Vec<_> = witness_map.into_iter().collect();
+  for (i, (witness, _)) in pairs.iter().enumerate() {
+    if witness.as_usize() != i {
+      panic!();
+    }
+  }
+
+  // Create and fill our result vector
+  pairs.into_iter().map(|(_, value)| value.into_repr()).collect()
 }
 
 #[cfg(test)]
@@ -167,9 +190,15 @@ mod tests {
   use std::path::Path;
 
   use super::*;
-
+  // TODO: Can refactor
   fn program() -> NoirProgram {
-    let json_path = Path::new("./tests/fixtures/example.json");
+    let json_path = Path::new("./tests/fixtures/basic.json");
+    let bin = std::fs::read(json_path).unwrap();
+    NoirProgram::new(&bin)
+  }
+
+  fn program_hash() -> NoirProgram {
+    let json_path = Path::new("./tests/fixtures/hash.json");
     let bin = std::fs::read(json_path).unwrap();
     NoirProgram::new(&bin)
   }
@@ -184,6 +213,7 @@ mod tests {
   /// }
   /// ```
   #[test]
+  #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
   fn test_generate_constraints() {
     let program = program();
     let ccs = program.generate_constraints();
@@ -291,5 +321,35 @@ mod tests {
       Fr::from(1),
       "Output variable should have coefficient 1"
     );
+  }
+
+  #[test]
+  #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+  fn test_solve_basic() {
+    let program = program();
+    let witness = program.solve(vec![Fr::from(1)], vec![Fr::from(2), Fr::from(3)]);
+    dbg!(witness);
+  }
+
+  #[test]
+  #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+  fn test_satisfied_basic() {
+    let program = program();
+    assert!(program.is_satisfied(vec![Fr::from(1)], vec![Fr::from(2), Fr::from(3)]));
+  }
+
+  #[test]
+  #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+  fn test_solve_hash() {
+    let program = program_hash();
+    let witness = program.solve(vec![Fr::from(1); 32], vec![Fr::from(2); 16]);
+    dbg!(witness);
+  }
+
+  #[test]
+  #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+  fn test_satisfied_hash() {
+    let program = program_hash();
+    program.is_satisfied(vec![Fr::from(1); 32], vec![Fr::from(2); 16]);
   }
 }

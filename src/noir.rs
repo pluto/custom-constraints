@@ -102,31 +102,51 @@ impl NoirProgram {
 
     // Process ACIR gates into constraints
     for opcode in &self.circuit().opcodes {
-      // TODO: What we really need to do in here is see what witness indices are fed into the gate and then order those to fill the matrices since we will quickly get witness indices that far surpass the actual gate width.
       if let Opcode::AssertZero(gate) = opcode {
         let constraint_idx = ccs.add_constraint();
 
-        // Handle multiplication terms
+        // First, collect all unique witness indices used in this gate
+        let mut witnesses = std::collections::BTreeSet::new();
+
+        // Add indices from multiplication terms
+        for (_, wi, wj) in &gate.mul_terms {
+          witnesses.insert(wi.as_usize());
+          witnesses.insert(wj.as_usize());
+        }
+
+        // Add indices from linear terms
+        for (_, wi) in &gate.linear_combinations {
+          witnesses.insert(wi.as_usize());
+        }
+
+        dbg!(&witnesses);
+
+        // Create a mapping from witness indices to matrix indices
+        let witness_to_matrix: std::collections::HashMap<usize, usize> = witnesses
+          .into_iter()
+          .enumerate()
+          .map(|(matrix_idx, witness_idx)| (witness_idx, matrix_idx))
+          .collect();
+
+        // Now use this mapping when writing to matrices
         for (q_ij, wi, wj) in &gate.mul_terms {
-          let i = wi.as_usize();
-          let j = wj.as_usize();
+          let matrix_i = witness_to_matrix[&wi.as_usize()];
+          let matrix_j = witness_to_matrix[&wj.as_usize()];
 
-          // Set up selector matrices
-          ccs.matrices[i].write_expand(constraint_idx, i, Fr::ONE);
-          ccs.matrices[j].write_expand(constraint_idx, j, Fr::ONE);
+          // Write to the mapped matrix indices
+          ccs.matrices[matrix_i].write_expand(constraint_idx, wi.as_usize(), Fr::ONE);
+          ccs.matrices[matrix_j].write_expand(constraint_idx, wj.as_usize(), Fr::ONE);
 
-          // Set multiplication coefficient
-          ccs.set_multiplication_coefficient(i, j, constraint_idx, q_ij.into_repr());
+          ccs.set_multiplication_coefficient(matrix_i, matrix_j, constraint_idx, q_ij.into_repr());
         }
 
-        // Handle linear terms
+        // Similarly for linear terms
         for (q_i, wi) in &gate.linear_combinations {
-          let i = wi.as_usize();
-          ccs.matrices[i].write_expand(constraint_idx, i, Fr::ONE);
-          ccs.set_linear(i, constraint_idx, q_i.into_repr());
+          let matrix_i = witness_to_matrix[&wi.as_usize()];
+          ccs.matrices[matrix_i].write_expand(constraint_idx, wi.as_usize(), Fr::ONE);
+          ccs.set_linear(matrix_i, constraint_idx, q_i.into_repr());
         }
 
-        // Set constant term
         ccs.set_constant(constraint_idx, gate.q_c.into_repr());
       }
     }

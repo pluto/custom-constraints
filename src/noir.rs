@@ -102,6 +102,7 @@ impl NoirProgram {
 
     // Process ACIR gates into constraints
     for opcode in &self.circuit().opcodes {
+      // TODO: What we really need to do in here is see what witness indices are fed into the gate and then order those to fill the matrices since we will quickly get witness indices that far surpass the actual gate width.
       if let Opcode::AssertZero(gate) = opcode {
         let constraint_idx = ccs.add_constraint();
 

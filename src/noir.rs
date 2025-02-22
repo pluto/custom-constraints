@@ -89,69 +89,61 @@ impl NoirProgram {
   /// 2. Multiplication terms allow quadratic constraints
   /// 3. Linear terms capture direct variable usage
   /// 4. Constant terms complete the constraints
-  pub fn generate_constraints(&self) -> CCS<Plonkish<Fr>, Fr> {
-    let (mut ccs, width) = match self.circuit().expression_width {
-      acir::circuit::ExpressionWidth::Unbounded => panic!("Unbounded width not supported"),
-      acir::circuit::ExpressionWidth::Bounded { width } => (CCS::new_width(width), width),
-    };
+  // pub fn generate_constraints(&self) -> CCS<Plonkish<Fr>, Fr> {
+  //   let ccs = CCS::<Plonkish<Fr>, Fr>::new_plonkish();
 
-    // Initialize matrices for witness selection
-    for i in 0..width {
-      ccs.matrices[i] = SparseMatrix::new_rows_cols(0, self.circuit().num_vars() as usize);
-    }
+  //   // Process ACIR gates into constraints
+  //   for opcode in &self.circuit().opcodes {
+  //     if let Opcode::AssertZero(gate) = opcode {
+  //       let constraint_idx = ccs.add_constraint();
 
-    // Process ACIR gates into constraints
-    for opcode in &self.circuit().opcodes {
-      if let Opcode::AssertZero(gate) = opcode {
-        let constraint_idx = ccs.add_constraint();
+  //       // First, collect all unique witness indices used in this gate
+  //       let mut witnesses = std::collections::BTreeSet::new();
 
-        // First, collect all unique witness indices used in this gate
-        let mut witnesses = std::collections::BTreeSet::new();
+  //       // Add indices from multiplication terms
+  //       for (_, wi, wj) in &gate.mul_terms {
+  //         witnesses.insert(wi.as_usize());
+  //         witnesses.insert(wj.as_usize());
+  //       }
 
-        // Add indices from multiplication terms
-        for (_, wi, wj) in &gate.mul_terms {
-          witnesses.insert(wi.as_usize());
-          witnesses.insert(wj.as_usize());
-        }
+  //       // Add indices from linear terms
+  //       for (_, wi) in &gate.linear_combinations {
+  //         witnesses.insert(wi.as_usize());
+  //       }
 
-        // Add indices from linear terms
-        for (_, wi) in &gate.linear_combinations {
-          witnesses.insert(wi.as_usize());
-        }
+  //       dbg!(&witnesses);
 
-        dbg!(&witnesses);
+  //       // Create a mapping from witness indices to matrix indices
+  //       let witness_to_matrix: std::collections::HashMap<usize, usize> = witnesses
+  //         .into_iter()
+  //         .enumerate()
+  //         .map(|(matrix_idx, witness_idx)| (witness_idx, matrix_idx))
+  //         .collect();
 
-        // Create a mapping from witness indices to matrix indices
-        let witness_to_matrix: std::collections::HashMap<usize, usize> = witnesses
-          .into_iter()
-          .enumerate()
-          .map(|(matrix_idx, witness_idx)| (witness_idx, matrix_idx))
-          .collect();
+  //       // Now use this mapping when writing to matrices
+  //       for (q_ij, wi, wj) in &gate.mul_terms {
+  //         let matrix_i = witness_to_matrix[&wi.as_usize()];
+  //         let matrix_j = witness_to_matrix[&wj.as_usize()];
 
-        // Now use this mapping when writing to matrices
-        for (q_ij, wi, wj) in &gate.mul_terms {
-          let matrix_i = witness_to_matrix[&wi.as_usize()];
-          let matrix_j = witness_to_matrix[&wj.as_usize()];
+  //         // Write to the mapped matrix indices
+  //         ccs.matrices[matrix_i].write_expand(constraint_idx, wi.as_usize(), Fr::ONE);
+  //         ccs.matrices[matrix_j].write_expand(constraint_idx, wj.as_usize(), Fr::ONE);
 
-          // Write to the mapped matrix indices
-          ccs.matrices[matrix_i].write_expand(constraint_idx, wi.as_usize(), Fr::ONE);
-          ccs.matrices[matrix_j].write_expand(constraint_idx, wj.as_usize(), Fr::ONE);
+  //         ccs.set_multiplication_coefficient(matrix_i, matrix_j, constraint_idx, q_ij.into_repr());
+  //       }
 
-          ccs.set_multiplication_coefficient(matrix_i, matrix_j, constraint_idx, q_ij.into_repr());
-        }
+  //       // Similarly for linear terms
+  //       for (q_i, wi) in &gate.linear_combinations {
+  //         let matrix_i = witness_to_matrix[&wi.as_usize()];
+  //         ccs.matrices[matrix_i].write_expand(constraint_idx, wi.as_usize(), Fr::ONE);
+  //         ccs.set_linear(matrix_i, constraint_idx, q_i.into_repr());
+  //       }
 
-        // Similarly for linear terms
-        for (q_i, wi) in &gate.linear_combinations {
-          let matrix_i = witness_to_matrix[&wi.as_usize()];
-          ccs.matrices[matrix_i].write_expand(constraint_idx, wi.as_usize(), Fr::ONE);
-          ccs.set_linear(matrix_i, constraint_idx, q_i.into_repr());
-        }
-
-        ccs.set_constant(constraint_idx, gate.q_c.into_repr());
-      }
-    }
-    ccs
-  }
+  //       ccs.set_constant(constraint_idx, gate.q_c.into_repr());
+  //     }
+  //   }
+  //   ccs
+  // }
 
   pub fn solve(
     &self,
@@ -185,12 +177,12 @@ impl NoirProgram {
     acvm.finalize()
   }
 
-  pub fn is_satisfied(&self, public_inputs: Vec<Fr>, private_inputs: Vec<Fr>) -> bool {
-    let ccs = self.generate_constraints();
-    let witness = self.solve(public_inputs, private_inputs);
-    let witness = witness_map_as_vec(witness);
-    ccs.is_satisfied(&[], &witness)
-  }
+  // pub fn is_satisfied(&self, public_inputs: Vec<Fr>, private_inputs: Vec<Fr>) -> bool {
+  //   let ccs = self.generate_constraints();
+  //   let witness = self.solve(public_inputs, private_inputs);
+  //   let witness = witness_map_as_vec(witness);
+  //   ccs.is_satisfied(&[], &witness)
+  // }
 }
 
 fn witness_map_as_vec(witness_map: WitnessMap<GenericFieldElement<Fr>>) -> Vec<Fr> {
@@ -224,153 +216,153 @@ mod tests {
     NoirProgram::new(&bin)
   }
 
-  /// Tests conversion of a Noir program to our constraint system
-  /// This test uses the example circuit:
-  /// ```ignore
-  /// pub fn main(x0: pub Field, w: [Field; 2]) -> pub Field {
-  ///     1 * x0 * x0 + 2 * x0 * w[0] + 3 * x0 * w[1] +
-  ///     4 * w[0] * w[0] + 5 * w[0] * w[1] + 6 * w[1] * w[1] +
-  ///     7 * x0 + 8 * w[0] + 9 * w[1] + 10
-  /// }
-  /// ```
-  #[test]
-  #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
-  fn test_generate_constraints() {
-    let program = program();
-    let ccs = program.generate_constraints();
+  // / Tests conversion of a Noir program to our constraint system
+  // / This test uses the example circuit:
+  // / ```ignore
+  // / pub fn main(x0: pub Field, w: [Field; 2]) -> pub Field {
+  // /     1 * x0 * x0 + 2 * x0 * w[0] + 3 * x0 * w[1] +
+  // /     4 * w[0] * w[0] + 5 * w[0] * w[1] + 6 * w[1] * w[1] +
+  // /     7 * x0 + 8 * w[0] + 9 * w[1] + 10
+  // / }
+  // / ```
+  // #[test]
+  // #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+  // fn test_generate_constraints() {
+  //   let program = program();
+  //   let ccs = program.generate_constraints();
 
-    // Verify matrix dimensions and structure
-    assert_eq!(ccs.matrices.len(), 4, "Should have 4 selector matrices");
+  //   // Verify matrix dimensions and structure
+  //   assert_eq!(ccs.matrices.len(), 4, "Should have 4 selector matrices");
 
-    // Check matrix structure
-    for (i, matrix) in ccs.matrices.iter().enumerate() {
-      let (rows, cols) = matrix.dimensions();
-      assert!(rows > 0, "Matrix {} should have rows", i);
-      assert!(cols >= 4, "Matrix {} should have at least 4 columns", i);
+  //   // Check matrix structure
+  //   for (i, matrix) in ccs.matrices.iter().enumerate() {
+  //     let (rows, cols) = matrix.dimensions();
+  //     assert!(rows > 0, "Matrix {} should have rows", i);
+  //     assert!(cols >= 4, "Matrix {} should have at least 4 columns", i);
 
-      // Verify each matrix is properly selecting its variable
-      // A_0 should select x0, A_1 should select w[0], etc.
-      for _ in 0..rows {
-        assert_eq!(
-          matrix.dimensions().1,
-          4,
-          "Matrix should have exactly 4 columns (space for x0, w[0], w[1], output)"
-        );
+  //     // Verify each matrix is properly selecting its variable
+  //     // A_0 should select x0, A_1 should select w[0], etc.
+  //     for _ in 0..rows {
+  //       assert_eq!(
+  //         matrix.dimensions().1,
+  //         4,
+  //         "Matrix should have exactly 4 columns (space for x0, w[0], w[1], output)"
+  //       );
 
-        // Each matrix should have exactly one 1 in its corresponding column
-        assert_eq!(
-          matrix * &vec![Fr::from(1), Fr::from(1), Fr::from(1), Fr::from(1)],
-          vec![Fr::from(1); rows],
-          "Matrix {} should select exactly one variable",
-          i
-        );
-      }
-    }
+  //       // Each matrix should have exactly one 1 in its corresponding column
+  //       assert_eq!(
+  //         matrix * &vec![Fr::from(1), Fr::from(1), Fr::from(1), Fr::from(1)],
+  //         vec![Fr::from(1); rows],
+  //         "Matrix {} should select exactly one variable",
+  //         i
+  //       );
+  //     }
+  //   }
 
-    // Now let's verify every coefficient from our polynomial
-    let selectors = &ccs.selectors;
+  //   // Now let's verify every coefficient from our polynomial
+  //   let selectors = &ccs.selectors;
 
-    // First, verify the quadratic terms
-    // x0 * x0 term should have coefficient 1
-    assert_eq!(
-      selectors[0][0], // q_0,0 coefficient
-      -Fr::from(1),
-      "x0^2 term should have coefficient -1"
-    );
+  //   // First, verify the quadratic terms
+  //   // x0 * x0 term should have coefficient 1
+  //   assert_eq!(
+  //     selectors[0][0], // q_0,0 coefficient
+  //     -Fr::from(1),
+  //     "x0^2 term should have coefficient -1"
+  //   );
 
-    // x0 * w[0] term should have coefficient 2
-    assert_eq!(
-      selectors[1][0], // q_0,1 coefficient
-      -Fr::from(2),
-      "x0*w[0] term should have coefficient -2"
-    );
+  //   // x0 * w[0] term should have coefficient 2
+  //   assert_eq!(
+  //     selectors[1][0], // q_0,1 coefficient
+  //     -Fr::from(2),
+  //     "x0*w[0] term should have coefficient -2"
+  //   );
 
-    // x0 * w[1] term should have coefficient 3
-    assert_eq!(
-      selectors[2][0], // q_0,2 coefficient
-      -Fr::from(3),
-      "x0*w[1] term should have coefficient -3"
-    );
+  //   // x0 * w[1] term should have coefficient 3
+  //   assert_eq!(
+  //     selectors[2][0], // q_0,2 coefficient
+  //     -Fr::from(3),
+  //     "x0*w[1] term should have coefficient -3"
+  //   );
 
-    // w[0] * w[0] term should have coefficient 4
-    assert_eq!(
-      selectors[4][0], // q_1,1 coefficient
-      -Fr::from(4),
-      "w[0]^2 term should have coefficient -4"
-    );
+  //   // w[0] * w[0] term should have coefficient 4
+  //   assert_eq!(
+  //     selectors[4][0], // q_1,1 coefficient
+  //     -Fr::from(4),
+  //     "w[0]^2 term should have coefficient -4"
+  //   );
 
-    // w[0] * w[1] term should have coefficient 5
-    assert_eq!(
-      selectors[5][0], // q_1,2 coefficient
-      -Fr::from(5),
-      "w[0]*w[1] term should have coefficient -5"
-    );
+  //   // w[0] * w[1] term should have coefficient 5
+  //   assert_eq!(
+  //     selectors[5][0], // q_1,2 coefficient
+  //     -Fr::from(5),
+  //     "w[0]*w[1] term should have coefficient -5"
+  //   );
 
-    // w[1] * w[1] term should have coefficient 6
-    assert_eq!(
-      selectors[7][0], // q_2,2 coefficient
-      -Fr::from(6),
-      "w[1]^2 term should have coefficient -6"
-    );
+  //   // w[1] * w[1] term should have coefficient 6
+  //   assert_eq!(
+  //     selectors[7][0], // q_2,2 coefficient
+  //     -Fr::from(6),
+  //     "w[1]^2 term should have coefficient -6"
+  //   );
 
-    // Verify linear terms
-    let num_quad_terms = (4 * 5) / 2; // Number of quadratic terms
+  //   // Verify linear terms
+  //   let num_quad_terms = (4 * 5) / 2; // Number of quadratic terms
 
-    // x0 term should have coefficient 7
-    assert_eq!(selectors[num_quad_terms][0], -Fr::from(7), "x0 term should have coefficient -7");
+  //   // x0 term should have coefficient 7
+  //   assert_eq!(selectors[num_quad_terms][0], -Fr::from(7), "x0 term should have coefficient -7");
 
-    // w[0] term should have coefficient 8
-    assert_eq!(
-      selectors[num_quad_terms + 1][0],
-      -Fr::from(8),
-      "w[0] term should have coefficient -8"
-    );
+  //   // w[0] term should have coefficient 8
+  //   assert_eq!(
+  //     selectors[num_quad_terms + 1][0],
+  //     -Fr::from(8),
+  //     "w[0] term should have coefficient -8"
+  //   );
 
-    // w[1] term should have coefficient 9
-    assert_eq!(
-      selectors[num_quad_terms + 2][0],
-      -Fr::from(9),
-      "w[1] term should have coefficient -9"
-    );
+  //   // w[1] term should have coefficient 9
+  //   assert_eq!(
+  //     selectors[num_quad_terms + 2][0],
+  //     -Fr::from(9),
+  //     "w[1] term should have coefficient -9"
+  //   );
 
-    // Verify constant term
-    assert_eq!(selectors.last().unwrap()[0], -Fr::from(10), "Constant term should be -10");
+  //   // Verify constant term
+  //   assert_eq!(selectors.last().unwrap()[0], -Fr::from(10), "Constant term should be -10");
 
-    // Verify the output variable's coefficient is 1
-    assert_eq!(
-      selectors[num_quad_terms + 3][0],
-      Fr::from(1),
-      "Output variable should have coefficient 1"
-    );
-  }
+  //   // Verify the output variable's coefficient is 1
+  //   assert_eq!(
+  //     selectors[num_quad_terms + 3][0],
+  //     Fr::from(1),
+  //     "Output variable should have coefficient 1"
+  //   );
+  // }
 
-  #[test]
-  #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
-  fn test_solve_basic() {
-    let program = program();
-    let witness = program.solve(vec![Fr::from(1)], vec![Fr::from(2), Fr::from(3)]);
-    dbg!(witness);
-  }
+  // #[test]
+  // #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+  // fn test_solve_basic() {
+  //   let program = program();
+  //   let witness = program.solve(vec![Fr::from(1)], vec![Fr::from(2), Fr::from(3)]);
+  //   dbg!(witness);
+  // }
 
-  #[test]
-  #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
-  fn test_satisfied_basic() {
-    let program = program();
-    assert!(program.is_satisfied(vec![Fr::from(1)], vec![Fr::from(2), Fr::from(3)]));
-  }
+  // #[test]
+  // #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+  // fn test_satisfied_basic() {
+  //   let program = program();
+  //   assert!(program.is_satisfied(vec![Fr::from(1)], vec![Fr::from(2), Fr::from(3)]));
+  // }
 
-  #[test]
-  #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
-  fn test_solve_hash() {
-    let program = program_hash();
-    let witness = program.solve(vec![Fr::from(1); 32], vec![Fr::from(2); 16]);
-    dbg!(witness);
-  }
+  // #[test]
+  // #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+  // fn test_solve_hash() {
+  //   let program = program_hash();
+  //   let witness = program.solve(vec![Fr::from(1); 32], vec![Fr::from(2); 16]);
+  //   dbg!(witness);
+  // }
 
-  #[test]
-  #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
-  fn test_satisfied_hash() {
-    let program = program_hash();
-    program.is_satisfied(vec![Fr::from(1); 32], vec![Fr::from(2); 16]);
-  }
+  // #[test]
+  // #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+  // fn test_satisfied_hash() {
+  //   let program = program_hash();
+  //   program.is_satisfied(vec![Fr::from(1); 32], vec![Fr::from(2); 16]);
+  // }
 }

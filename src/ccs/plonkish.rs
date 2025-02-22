@@ -94,68 +94,45 @@ impl<F> CCSType<F> for Plonkish<F> {
 }
 
 impl<F: Field> CCS<Plonkish<F>, F> {
-  /// Creates a new PLONK-style constraint system with the specified width.
+  /// Creates a new basic PLONK-style constraint system.
   ///
-  /// The width parameter determines how many selector matrices and corresponding
-  /// terms are created in the system. For a width n, the system will have:
-  /// - n selector matrices A_0 through A_{n-1}, each capable of selecting variables from the input
-  ///   vector
-  /// - Multiplication terms q_{i,j} for all pairs where i ≤ j, allowing products between any two
-  ///   (possibly same) selected variables
-  /// - Linear terms q_i for each selector matrix, allowing direct use of selected variables
-  /// - A constant term q_c that adds field elements to constraints
-  ///
-  /// # Arguments
-  /// * `width` - Number of selector matrices to create (must be ≥ 2)
-  ///
-  /// # Panics
-  /// Panics if width < 2, as PLONK-style systems need at least two matrices
-  /// for multiplication terms
-  ///
-  /// # Examples
-  /// ```
-  /// # use custom_constraints::ccs::{plonkish::Plonkish, CCS};
-  /// # use ark_ff::{Field, Fp, MontBackend, MontConfig};
-  /// # #[derive(MontConfig)]
-  /// # #[modulus = "17"]
-  /// # #[generator = "3"]
-  /// # struct FConfig;
-  /// # type F = Fp<MontBackend<FConfig, 1>, 1>;
-  /// let ccs = CCS::<Plonkish<F>, F>::new_width(3);
-  /// // Creates a system with:
-  /// // - 3 selector matrices
-  /// // - 6 multiplication terms (0,0), (0,1), (0,2), (1,1), (1,2), (2,2)
-  /// // - 3 linear terms
-  /// // - 1 constant term
-  /// ```
-  pub fn new_width(width: usize) -> Self {
-    assert!(width >= 2, "Width must be at least 2");
-    let mut ccs = Self::default();
+  /// The system will have:
+  /// - Three selector matrices A, B, C for linear terms
+  /// - One multiplication term between A and B matrices
+  /// - Linear terms for each selector matrix
+  /// - A constant term
+  pub fn new_plonkish() -> Self {
+    let mut ccs = Self { matrices: Vec::new(), multisets: Vec::new(), selectors: Vec::new() };
 
-    // Initialize selector matrices
-    for _ in 0..width {
+    // Initialize 3 empty matrices (A, B, C)
+    for _ in 0..3 {
       ccs.matrices.push(SparseMatrix::new_rows_cols(0, 0));
     }
 
-    // Create multisets for all possible terms:
-    // 1. Multiplication terms (i,j) where i ≤ j
-    for i in 0..width {
-      for j in i..width {
-        ccs.multisets.push(vec![i, j]);
-      }
-    }
-    // 2. Linear terms
-    for i in 0..width {
-      ccs.multisets.push(vec![i]);
-    }
-    // 3. Constant term
-    ccs.multisets.push(vec![]);
+    // Create multisets for all terms
+    ccs.multisets.push(vec![0, 1]); // Multiplication term (A,B)
+    ccs.multisets.push(vec![0]); // Linear term A
+    ccs.multisets.push(vec![1]); // Linear term B
+    ccs.multisets.push(vec![2]); // Linear term C
+    ccs.multisets.push(vec![]); // Constant term
 
-    // Initialize selector vectors for all terms
-    let num_selectors = (width * (width + 1)) / 2 + width + 1;
-    ccs.selectors = vec![vec![]; num_selectors];
+    // Initialize selector vectors
+    ccs.selectors = vec![vec![]; 5]; // 1 mul + 3 linear + 1 const
 
     ccs
+  }
+
+  /// Adds a new variable to the system.
+  /// Returns the index of the new variable.
+  pub fn add_variable(&mut self) -> usize {
+    let var_idx = self.matrices[0].dimensions().1;
+
+    // Add a new column to each matrix
+    for matrix in &mut self.matrices {
+      matrix.add_column();
+    }
+
+    var_idx
   }
 
   /// Adds a new constraint to the system.
@@ -164,29 +141,11 @@ impl<F: Field> CCS<Plonkish<F>, F> {
   /// 1. Adds a new row to each selector matrix
   /// 2. Extends each selector vector with a zero coefficient
   ///
-  /// The new constraint starts with all zero coefficients and can be configured
-  /// using set_multiplication_coefficient, set_linear, and set_constant.
-  ///
   /// # Returns
-  /// The index of the new constraint, which can be used in subsequent coefficient
-  /// setting operations
-  ///
-  /// # Examples
-  /// ```
-  /// # use custom_constraints::ccs::{plonkish::Plonkish, CCS};
-  /// # use ark_ff::{Field, Fp, MontBackend, MontConfig};
-  /// # #[derive(MontConfig)]
-  /// # #[modulus = "17"]
-  /// # #[generator = "3"]
-  /// # struct FConfig;
-  /// # type F = Fp<MontBackend<FConfig, 1>, 1>;
-  /// let mut ccs = CCS::<Plonkish<F>, F>::new_width(2);
-  /// let c1 = ccs.add_constraint(); // First constraint
-  /// let c2 = ccs.add_constraint(); // Second constraint
-  /// ```
+  /// The index of the new constraint
+  /// Adds a new constraint to the system.
   pub fn add_constraint(&mut self) -> usize {
-    // Get current number of constraints
-    let constraint_idx = self.matrices.first().map_or(0, |first| first.dimensions().0);
+    let constraint_idx = self.matrices[0].dimensions().0;
 
     // Add a new row to each selector matrix
     for matrix in &mut self.matrices {
@@ -201,84 +160,56 @@ impl<F: Field> CCS<Plonkish<F>, F> {
     constraint_idx
   }
 
-  /// Sets a multiplication coefficient for a specific constraint.
-  ///
-  /// This creates a term q_{i,j} * (A_i z ∘ A_j z) in the constraint equation,
-  /// where:
-  /// - q_{i,j} is the coefficient being set
-  /// - A_i and A_j are selector matrices
-  /// - z is the input vector
-  /// - ∘ denotes the Hadamard (element-wise) product
+  /// Sets a multiplication term A[i]·z * B[j]·z in a constraint
   ///
   /// # Arguments
-  /// * `i` - First matrix index
-  /// * `j` - Second matrix index
   /// * `constraint_idx` - Which constraint to modify
-  /// * `value` - Coefficient value to set
-  ///
-  /// # Panics
-  /// Panics if i or j are out of bounds for the system's width
-  pub fn set_multiplication_coefficient(
+  /// * `value` - Coefficient value
+  /// * `var_a` - Variable index for matrix A
+  /// * `var_b` - Variable index for matrix B
+  pub fn set_multiplication(
     &mut self,
-    i: usize,
-    j: usize,
     constraint_idx: usize,
     value: F,
+    var_a: usize,
+    var_b: usize,
   ) {
-    let width = self.matrices.len();
-    assert!(i < width && j < width, "Matrix index out of bounds");
-
-    // Ensure i ≤ j for consistent indexing
-    let (i, j) = if i <= j { (i, j) } else { (j, i) };
-
-    // Calculate index for (i,j) pair
-    // For each row k, we have (width-k) terms starting with (k,k)
-    let idx = (i * (2 * width - i + 1)) / 2 + (j - i);
-
-    if let Some(selector) = self.selectors.get_mut(idx) {
+    // Set coefficient
+    if let Some(selector) = self.selectors.get_mut(0) {
       if let Some(coeff) = selector.get_mut(constraint_idx) {
         *coeff = value;
       }
     }
+
+    // Update matrix A
+    self.matrices[0].write(constraint_idx, var_a, F::ONE);
+
+    // Update matrix B
+    self.matrices[1].write(constraint_idx, var_b, F::ONE);
   }
 
-  /// Sets a linear term coefficient for a specific constraint.
-  ///
-  /// This creates a term q_i * (A_i z) in the constraint equation,
-  /// where:
-  /// - q_i is the coefficient being set
-  /// - A_i is a selector matrix
-  /// - z is the input vector
+  /// Sets a linear term for a specific matrix (A, B, or C) in a constraint
   ///
   /// # Arguments
-  /// * `i` - Matrix index
+  /// * `matrix` - Which matrix (0=A, 1=B, 2=C)
   /// * `constraint_idx` - Which constraint to modify
-  /// * `value` - Coefficient value to set
-  ///
-  /// # Panics
-  /// Panics if i is out of bounds for the system's width
-  pub fn set_linear(&mut self, i: usize, constraint_idx: usize, value: F) {
-    let width = self.matrices.len();
-    assert!(i < width, "Matrix index out of bounds");
+  /// * `value` - Coefficient value
+  /// * `var` - Variable index to select
+  pub fn set_linear(&mut self, matrix: usize, constraint_idx: usize, value: F, var: usize) {
+    assert!(matrix < 3, "Matrix index must be 0 (A), 1 (B), or 2 (C)");
 
-    let num_mul_terms = (width * (width + 1)) / 2;
-    let idx = num_mul_terms + i;
-
-    if let Some(selector) = self.selectors.get_mut(idx) {
+    // Set coefficient
+    if let Some(selector) = self.selectors.get_mut(matrix + 1) {
       if let Some(coeff) = selector.get_mut(constraint_idx) {
         *coeff = value;
       }
     }
+
+    // Update matrix entry
+    self.matrices[matrix].write(constraint_idx, var, F::ONE);
   }
 
   /// Sets the constant term for a specific constraint.
-  ///
-  /// The constant term q_c is added directly to the constraint equation
-  /// without any variable interaction.
-  ///
-  /// # Arguments
-  /// * `constraint_idx` - Which constraint to modify
-  /// * `value` - Constant value to set
   pub fn set_constant(&mut self, constraint_idx: usize, value: F) {
     if let Some(selector) = self.selectors.last_mut() {
       if let Some(coeff) = selector.get_mut(constraint_idx) {
@@ -287,63 +218,38 @@ impl<F: Field> CCS<Plonkish<F>, F> {
     }
   }
 
-  /// Checks if a witness and public input satisfy all constraints in the system.
-  ///
-  /// For each constraint, evaluates the equation:
-  /// ```text
-  /// sum_{i≤j} q_{i,j} (A_i z ∘ A_j z) + sum_i q_i (A_i z) + q_c = 0
-  /// ```
-  /// where z is the concatenation of public inputs x and witness values w.
-  ///
-  /// # Arguments
-  /// * `x` - Public input values
-  /// * `w` - Witness values
-  ///
-  /// # Returns
-  /// `true` if all constraints evaluate to zero, `false` otherwise
+  /// Checks if a witness and public input satisfy all constraints.
   pub fn is_satisfied(&self, x: &[F], w: &[F]) -> bool {
     let mut z = Vec::with_capacity(x.len() + w.len());
     z.extend(x.iter().copied());
     z.extend(w.iter().copied());
 
-    // Calculate matrix-vector products for each selector matrix
-    let products: Vec<Vec<F>> = self.matrices.iter().map(|matrix| matrix * &z).collect();
+    // Calculate matrix-vector products
+    let az = &self.matrices[0] * &z;
+    let bz = &self.matrices[1] * &z;
+    let cz = &self.matrices[2] * &z;
 
-    // If no constraints, system is trivially satisfied
-    let num_constraints = products.first().map_or(0, |v| v.len());
+    let num_constraints = az.len();
     if num_constraints == 0 {
       return true;
     }
 
-    let width = self.matrices.len();
-
     // Check each constraint
     for row in 0..num_constraints {
       let mut sum = F::ZERO;
-      let mut selector_idx = 0;
 
-      // Evaluate multiplication terms (i ≤ j)
-      for i in 0..width {
-        for j in i..width {
-          if let Some(selector) = self.selectors.get(selector_idx) {
-            let term = products[i][row] * products[j][row];
-            sum += selector[row] * term;
-          }
-          selector_idx += 1;
-        }
-      }
+      // Multiplication term qm×(Az×Bz)
+      let mul_term = self.selectors[0][row] * az[row] * bz[row];
+      sum += mul_term;
 
-      // Evaluate linear terms
-      products.iter().take(width).zip(self.selectors.iter().skip(selector_idx)).for_each(
-        |(product, selector)| {
-          sum += selector[row] * product[row];
-        },
-      );
+      // Linear terms
+      let lin_a = self.selectors[1][row] * az[row]; // ql×Az
+      let lin_b = self.selectors[2][row] * bz[row]; // qr×Bz
+      let lin_c = self.selectors[3][row] * cz[row]; // qo×Cz
+      sum += lin_a + lin_b + lin_c;
 
-      // Add constant term
-      if let Some(selector) = self.selectors.last() {
-        sum += selector[row];
-      }
+      // Constant term
+      sum += self.selectors[4][row];
 
       if sum != F::ZERO {
         return false;
@@ -356,110 +262,54 @@ impl<F: Field> CCS<Plonkish<F>, F> {
 
 impl<F: Field + Display> Display for CCS<Plonkish<F>, F> {
   fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-    writeln!(f, "Plonkish Constraint System (width = {}):\n", self.matrices.len())?;
+    writeln!(f, "Plonkish Constraint System:\n")?;
 
     // Display matrices
     writeln!(f, "Matrices:")?;
-    for (i, matrix) in self.matrices.iter().enumerate() {
-      writeln!(f, "A_{i} =")?;
-      writeln!(f, "{matrix}")?;
-    }
+    writeln!(f, "A =")?;
+    writeln!(f, "{}", self.matrices[0])?;
+    writeln!(f, "B =")?;
+    writeln!(f, "{}", self.matrices[1])?;
+    writeln!(f, "C =")?;
+    writeln!(f, "{}", self.matrices[2])?;
 
     // Display selectors
     writeln!(f, "\nSelectors:")?;
-    let width = self.matrices.len();
-    let mut idx = 0;
-
-    // Display multiplication term selectors
-    for i in 0..width {
-      for j in i..width {
-        write!(f, "q_{i},{j} = [")?;
-        if let Some(selector) = self.selectors.get(idx) {
-          for (k, &coeff) in selector.iter().enumerate() {
-            if k > 0 {
-              write!(f, ", ")?;
-            }
-            write!(f, "{coeff}")?;
-          }
-        }
-        writeln!(f, "]")?;
-        idx += 1;
-      }
-    }
-
-    // Display linear term selectors
-    for i in 0..width {
-      write!(f, "q_{i} = [")?;
-      if let Some(selector) = self.selectors.get(idx) {
-        for (k, &coeff) in selector.iter().enumerate() {
-          if k > 0 {
-            write!(f, ", ")?;
-          }
-          write!(f, "{coeff}")?;
-        }
-      }
-      writeln!(f, "]")?;
-      idx += 1;
-    }
-
-    // Display constant term
-    write!(f, "q_c = [")?;
-    if let Some(selector) = self.selectors.last() {
-      for (k, &coeff) in selector.iter().enumerate() {
-        if k > 0 {
-          write!(f, ", ")?;
-        }
-        write!(f, "{coeff}")?;
-      }
-    }
-    writeln!(f, "]")?;
+    writeln!(f, "qm = {:?}", self.selectors[0])?; // multiplication term
+    writeln!(f, "ql = {:?}", self.selectors[1])?; // linear term for A
+    writeln!(f, "qr = {:?}", self.selectors[2])?; // linear term for B
+    writeln!(f, "qo = {:?}", self.selectors[3])?; // linear term for C
+    writeln!(f, "qc = {:?}", self.selectors[4])?; // constant term
 
     // Display constraint equation
     writeln!(f, "\nConstraint equation:")?;
-    let mut first_term = true;
+    let mut terms = Vec::new();
 
-    // Write multiplication terms
-    idx = 0;
-    for i in 0..width {
-      for j in i..width {
-        if let Some(selector) = self.selectors.get(idx) {
-          if !selector.iter().all(|&x| x == F::ZERO) {
-            if !first_term {
-              write!(f, " + ")?;
-            }
-            write!(f, "q_{i},{j}·(A_{i}·z ∘ A_{j}·z)")?;
-            first_term = false;
-          }
-        }
-        idx += 1;
-      }
+    // Add non-zero terms to equation
+    if !self.selectors[0].iter().all(|&x| x == F::ZERO) {
+      terms.push("qm·(Az·Bz)");
+    }
+    if !self.selectors[1].iter().all(|&x| x == F::ZERO) {
+      terms.push("ql·Az");
+    }
+    if !self.selectors[2].iter().all(|&x| x == F::ZERO) {
+      terms.push("qr·Bz");
+    }
+    if !self.selectors[3].iter().all(|&x| x == F::ZERO) {
+      terms.push("qo·Cz");
+    }
+    if !self.selectors[4].iter().all(|&x| x == F::ZERO) {
+      terms.push("qc");
     }
 
-    // Write linear terms
-    for i in 0..width {
-      if let Some(selector) = self.selectors.get(idx) {
-        if !selector.iter().all(|&x| x == F::ZERO) {
-          if !first_term {
-            write!(f, " + ")?;
-          }
-          write!(f, "q_{i}·(A_{i}·z)")?;
-          first_term = false;
-        }
-      }
-      idx += 1;
+    // Write equation
+    if terms.is_empty() {
+      write!(f, "0")?;
+    } else {
+      write!(f, "{}", terms.join(" + "))?;
     }
-
-    // Write constant term if non-zero
-    if let Some(selector) = self.selectors.last() {
-      if !selector.iter().all(|&x| x == F::ZERO) {
-        if !first_term {
-          write!(f, " + ")?;
-        }
-        write!(f, "q_c")?;
-      }
-    }
-
     writeln!(f, " = 0")?;
+
     Ok(())
   }
 }
@@ -472,49 +322,43 @@ mod tests {
   #[test]
   #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
   fn test_plonkish_structure() {
-    let ccs = CCS::<Plonkish<F17>, F17>::new_width(3);
+    let ccs = CCS::<Plonkish<F17>, F17>::new_plonkish();
 
     // For width 3, we should have:
-    // - 6 cross terms (0,0), (0,1), (0,2), (1,1), (1,2), (2,2)
+    // - 1 cross terms (0,1)
     // - 3 linear terms
     // - 1 constant term
-    assert_eq!(ccs.multisets.len(), 10, "Should have 6 terms total");
+    assert_eq!(ccs.multisets.len(), 5, "Should have 5 terms total");
 
     // Check cross term multisets
-    assert_eq!(ccs.multisets[0], vec![0, 0], "First cross term incorrect");
-    assert_eq!(ccs.multisets[1], vec![0, 1], "Second cross term incorrect");
-    assert_eq!(ccs.multisets[2], vec![0, 2], "Third cross term incorrect");
-    assert_eq!(ccs.multisets[3], vec![1, 1], "First cross term incorrect");
-    assert_eq!(ccs.multisets[4], vec![1, 2], "Second cross term incorrect");
-    assert_eq!(ccs.multisets[5], vec![2, 2], "Third cross term incorrect");
+    assert_eq!(ccs.multisets[0], vec![0, 1], "First cross term incorrect");
 
     // Check linear term multisets
-    assert_eq!(ccs.multisets[6], vec![0], "First linear term incorrect");
-    assert_eq!(ccs.multisets[7], vec![1], "Second linear term incorrect");
-    assert_eq!(ccs.multisets[8], vec![2], "Third linear term incorrect");
+    assert_eq!(ccs.multisets[1], vec![0], "First linear term incorrect");
+    assert_eq!(ccs.multisets[2], vec![1], "Second linear term incorrect");
+    assert_eq!(ccs.multisets[3], vec![2], "Third linear term incorrect");
   }
 
   #[test]
   #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
   fn test_plonkish_display() {
-    let mut ccs = CCS::<Plonkish<F17>, F17>::new_width(2);
+    let mut ccs = CCS::<Plonkish<F17>, F17>::new_plonkish();
+
+    // Add variables
+    let x = ccs.add_variable();
+    let y = ccs.add_variable();
+    let z = ccs.add_variable();
+    let w = ccs.add_variable();
 
     // Set up display for one constraint
-    ccs.add_constraint();
+    let c1 = ccs.add_constraint();
 
-    // Set up test matrices
-    let mut a1 = SparseMatrix::new_rows_cols(1, 4);
-    a1.write(0, 0, F17::ONE);
-    ccs.matrices[0] = a1;
-
-    let mut a2 = SparseMatrix::new_rows_cols(1, 4);
-    a2.write(0, 1, F17::ONE);
-    ccs.matrices[1] = a2;
-
-    // Set some coefficients
-    ccs.set_multiplication_coefficient(0, 1, 0, F17::from(3)); // 3(A_1·z)(A_2·z)
-    ccs.set_linear(0, 0, F17::from(4)); // 4(A_1·z)
-    ccs.set_linear(1, 0, F17::from(5)); // 5(A_2·z)
+    // Set coefficients for: 3(x·y) + 4x + 5y + 6z + 7 = 0
+    ccs.set_multiplication(c1, F17::from(3), x, y); // 3(x·y)
+    ccs.set_linear(0, c1, F17::from(4), x); // + 4x
+    ccs.set_linear(1, c1, F17::from(5), y); // + 5y
+    ccs.set_linear(2, c1, F17::from(6), z); // + 6z
+    ccs.set_constant(c1, F17::from(7)); // + 7
 
     println!("{ccs}");
   }
@@ -522,45 +366,29 @@ mod tests {
   #[test]
   #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
   fn test_plonkish_satisfaction() {
-    let mut ccs = CCS::<Plonkish<F17>, F17>::new_width(2);
+    let mut ccs = CCS::new_plonkish();
 
-    // Test one constraint
-    ccs.add_constraint();
+    // Add variables for x and y
+    let x = ccs.add_variable();
+    let y = ccs.add_variable();
 
-    // Set up matrices for x * y + 2x + 3y + 4 = 0
-    let mut a1 = SparseMatrix::new_rows_cols(1, 2);
-    a1.write(0, 0, F17::ONE); // Select x
-    ccs.matrices[0] = a1;
+    // Add constraint
+    let c1 = ccs.add_constraint();
 
-    let mut a2 = SparseMatrix::new_rows_cols(1, 2);
-    a2.write(0, 1, F17::ONE); // Select y
-    ccs.matrices[1] = a2;
+    // Set up constraint: x * y + 2x + 3y + 8 = 0
+    ccs.set_multiplication(c1, F17::ONE, x, y); // x * y term
+    ccs.set_linear(0, c1, F17::from(2), x); // 2x term
+    ccs.set_linear(1, c1, F17::from(3), y); // 3y term
+    ccs.set_linear(2, c1, F17::from(0), x); // no C term (using x as dummy var)
+    ccs.set_constant(c1, F17::from(8)); // constant term
 
-    // Set coefficients
-    ccs.set_multiplication_coefficient(0, 1, 0, F17::ONE); // 1 * (x * y)
-    ccs.set_linear(0, 0, F17::from(2)); // + 2x
-    ccs.set_linear(1, 0, F17::from(3)); // + 3y
-    ccs.set_constant(0, F17::from(8)); // + 4
-
-    println!("ccs: {ccs}");
+    println!("{ccs}");
 
     // With:
     // x = 4, y = 5
     // 4 * 5 + 2*4 + 3*5 + 8 = 51 ≡ 0 (mod 17)
     let x = vec![];
     let w = vec![F17::from(4), F17::from(5)];
-
-    // Let's print the computation
-    println!("\nVerifying computation:");
-    let prod = F17::from(4) * F17::from(5); // x * y
-    let lin1 = F17::from(2) * F17::from(4); // 2x
-    let lin2 = F17::from(3) * F17::from(5); // 3y
-    let constant = F17::from(8); // 4
-    println!("x * y = {prod}");
-    println!("2x = {lin1}");
-    println!("3y = {lin2}");
-    println!("constant = {constant}");
-    println!("sum = {}", prod + lin1 + lin2 + constant);
 
     assert!(ccs.is_satisfied(&x, &w));
 
@@ -572,25 +400,20 @@ mod tests {
   #[test]
   #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
   fn test_plonkish_simple() {
-    let mut ccs = CCS::<Plonkish<F17>, F17>::new_width(2);
+    let mut ccs = CCS::new_plonkish();
 
-    // Test one simple constraint
-    ccs.add_constraint();
+    // Add variables
+    let x = ccs.add_variable();
+    let y = ccs.add_variable();
 
-    // Set up matrices for x * y + 1 = 0
-    let mut a1 = SparseMatrix::new_rows_cols(1, 2);
-    a1.write(0, 0, F17::ONE); // Select x
-    ccs.matrices[0] = a1;
+    // Add constraint for x * y + 1 = 0
+    let c1 = ccs.add_constraint();
 
-    let mut a2 = SparseMatrix::new_rows_cols(1, 2);
-    a2.write(0, 1, F17::ONE); // Select y
-    ccs.matrices[1] = a2;
+    // Set up constraint using the new API
+    ccs.set_multiplication(c1, F17::ONE, x, y); // x * y
+    ccs.set_constant(c1, F17::ONE); // + 1
 
-    // Set coefficients
-    ccs.set_multiplication_coefficient(0, 1, 0, F17::ONE); // x * y
-    ccs.set_constant(0, F17::ONE); // + 1
-
-    println!("ccs: {ccs}");
+    println!("{ccs}");
 
     // 16 * 16 + 1 = 257 ≡ 0 (mod 17)
     let x = vec![];
@@ -600,120 +423,42 @@ mod tests {
 
   #[test]
   #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
-  fn test_plonkish_width3() {
-    let mut ccs = CCS::<Plonkish<F17>, F17>::new_width(3);
-
-    // Let's create a constraint:
-    // (x * y) + (y * z) + (x * z) + 2x + 3y + 4z + 5 = 0
-    ccs.add_constraint();
-
-    // Set up matrices
-    let mut a0 = SparseMatrix::new_rows_cols(1, 3);
-    a0.write(0, 0, F17::ONE); // Select x
-    ccs.matrices[0] = a0;
-
-    let mut a1 = SparseMatrix::new_rows_cols(1, 3);
-    a1.write(0, 1, F17::ONE); // Select y
-    ccs.matrices[1] = a1;
-
-    let mut a2 = SparseMatrix::new_rows_cols(1, 3);
-    a2.write(0, 2, F17::ONE); // Select z
-    ccs.matrices[2] = a2;
-
-    // Set cross terms
-    ccs.set_multiplication_coefficient(0, 1, 0, F17::ONE); // x * y
-    ccs.set_multiplication_coefficient(1, 2, 0, F17::ONE); // y * z
-    ccs.set_multiplication_coefficient(0, 2, 0, F17::ONE); // x * z
-
-    // Set linear terms
-    ccs.set_linear(0, 0, F17::from(2)); // 2x
-    ccs.set_linear(1, 0, F17::from(3)); // 3y
-    ccs.set_linear(2, 0, F17::from(4)); // 4z
-
-    // Set constant term
-    ccs.set_constant(0, -F17::from(4)); // - 4
-
-    println!("ccs: {ccs}");
-
-    // Let's print the computation
-    println!("\nVerifying computation:");
-    let xy = F17::from(2) * F17::from(3);
-    let yz = F17::from(3) * F17::from(4);
-    let xz = F17::from(2) * F17::from(4);
-    let x_term = F17::from(2) * F17::from(2);
-    let y_term = F17::from(3) * F17::from(3);
-    let z_term = F17::from(4) * F17::from(4);
-    let constant = -F17::from(4);
-
-    println!("x * y = {xy}");
-    println!("y * z = {yz}");
-    println!("x * z = {xz}");
-    println!("2x = {x_term}");
-    println!("3y = {y_term}");
-    println!("4z = {z_term}");
-    println!("constant = {constant}");
-    println!("sum = {}", xy + yz + xz + x_term + y_term + z_term + constant);
-
-    let x = vec![];
-
-    // Find solution where this equals 0 (mod 17)
-    // Solution: x = 2, y = 3, z = 1
-    let w = vec![F17::from(2), F17::from(3), F17::from(4)];
-    assert!(ccs.is_satisfied(&x, &w));
-
-    // Invalid assignment should fail
-    let w = vec![F17::from(1), F17::from(1), F17::from(1)];
-    assert!(!ccs.is_satisfied(&x, &w));
-  }
-
-  #[test]
-  #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
   fn test_multiple_constraints() {
-    let mut ccs = CCS::<Plonkish<F17>, F17>::new_width(3);
+    let mut ccs = CCS::new_plonkish();
 
-    // First constraint: x * y + z = 0
+    // Add variables
+    let x = ccs.add_variable();
+    let y = ccs.add_variable();
+    let z = ccs.add_variable();
+
+    // First constraint: x * y + z + 12 = 0
     let c1 = ccs.add_constraint();
-
-    // Second constraint: y * z + x = 0
-    let c2 = ccs.add_constraint();
-
-    // Set up matrices
-    let mut a1 = SparseMatrix::new_rows_cols(2, 3);
-    a1.write(0, 0, F17::ONE); // x in first constraint
-    a1.write(1, 0, F17::ONE); // x in second constraint
-    ccs.matrices[0] = a1;
-
-    let mut a2 = SparseMatrix::new_rows_cols(2, 3);
-    a2.write(0, 1, F17::ONE); // y in first constraint
-    a2.write(1, 1, F17::ONE); // y in second constraint
-    ccs.matrices[1] = a2;
-
-    let mut a3 = SparseMatrix::new_rows_cols(2, 3);
-    a3.write(0, 2, F17::ONE); // z in first constraint
-    a3.write(1, 2, F17::ONE); // z in second constraint
-    ccs.matrices[2] = a3;
-
-    // Set coefficients for first constraint: x * y + z + 12 = 0
-    ccs.set_multiplication_coefficient(0, 1, c1, F17::ONE); // x * y
-    ccs.set_linear(2, c1, F17::ONE); // + z
+    ccs.set_multiplication(c1, F17::ONE, x, y); // x * y
+    ccs.set_linear(2, c1, F17::ONE, z); // + z (using matrix C)
     ccs.set_constant(c1, F17::from(12)); // + 12
 
-    // Set coefficients for second constraint: y * z + x + 10 = 0
-    ccs.set_multiplication_coefficient(1, 2, c2, F17::ONE); // y * z
-    ccs.set_linear(0, c2, F17::ONE); // + x
+    // Second constraint: y * z + x + 10 = 0
+    let c2 = ccs.add_constraint();
+    ccs.set_multiplication(c2, F17::ONE, y, z); // y * z
+    ccs.set_linear(2, c2, F17::ONE, x); // + x (using matrix C instead of A)
     ccs.set_constant(c2, F17::from(10)); // + 10
 
-    println!("ccs: {ccs}");
+    println!("{ccs}");
 
-    // Test with satisfying assignment
-    // For first constraint: 1 * 2 + 3 + 12 ≡ 0 (mod 17)
-    // For second constraint: 2 * 3 + 1 + 10 ≡ 0 (mod 17)
+    // Test with valid assignment: (1,2,3)
     let x = vec![];
     let w = vec![F17::from(1), F17::from(2), F17::from(3)];
-    assert!(ccs.is_satisfied(&x, &w));
 
-    // Test with invalid assignment
-    let w = vec![F17::from(1), F17::from(1), F17::from(1)];
-    assert!(!ccs.is_satisfied(&x, &w));
+    // Manual verification
+    // First constraint: 1 * 2 + 3 + 12 = 17 ≡ 0 (mod 17)
+    // Second constraint: 2 * 3 + 1 + 10 = 17 ≡ 0 (mod 17)
+    assert!(ccs.is_satisfied(&x, &w), "Valid assignment (1,2,3) should satisfy the constraints");
+
+    // Test with invalid assignment: (1,1,1)
+    let w_invalid = vec![F17::from(1), F17::from(1), F17::from(1)];
+    assert!(
+      !ccs.is_satisfied(&x, &w_invalid),
+      "Invalid assignment (1,1,1) should not satisfy the constraints"
+    );
   }
 }

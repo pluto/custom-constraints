@@ -141,6 +141,31 @@ impl<F: Field> SparseMatrix<F> {
       }
     }
   }
+
+  /// Gets the value at the specified position in the matrix.
+  ///
+  /// # Arguments
+  /// * `row` - Row index
+  /// * `col` - Column index
+  ///
+  /// # Returns
+  /// The value at the specified position, or F::ZERO if no value exists at that position
+  pub fn get(&self, row: usize, col: usize) -> F {
+    // Check bounds
+    if row >= self.row_offsets.len() - 1 || col >= self.num_cols {
+      return F::ZERO;
+    }
+
+    // Get the range of indices for the current row
+    let start = self.row_offsets[row];
+    let end = self.row_offsets[row + 1];
+
+    // Search for the column index in the current row
+    match self.col_indices[start..end].binary_search(&col) {
+      Ok(pos) => self.values[start + pos],
+      Err(_) => F::ZERO,
+    }
+  }
 }
 
 impl<F: Field> Mul<&Vec<F>> for &SparseMatrix<F> {

@@ -38,6 +38,7 @@ use acvm::acir::{
 };
 use ark_ff::{AdditiveGroup, PrimeField};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 use super::*;
 use crate::{
@@ -89,61 +90,111 @@ impl NoirProgram {
   /// 2. Multiplication terms allow quadratic constraints
   /// 3. Linear terms capture direct variable usage
   /// 4. Constant terms complete the constraints
-  // pub fn generate_constraints(&self) -> CCS<Plonkish<Fr>, Fr> {
-  //   let ccs = CCS::<Plonkish<Fr>, Fr>::new_plonkish();
+  pub fn generate_constraints(&self) -> CCS<Plonkish<Fr>, Fr> {
+    let mut ccs = CCS::<Plonkish<Fr>, Fr>::new_plonkish();
 
-  //   // Process ACIR gates into constraints
-  //   for opcode in &self.circuit().opcodes {
-  //     if let Opcode::AssertZero(gate) = opcode {
-  //       let constraint_idx = ccs.add_constraint();
+    // First, add all variables
+    let mut max_witness = 0;
+    for opcode in &self.circuit().opcodes {
+      if let Opcode::AssertZero(gate) = opcode {
+        for (_, wi, wj) in &gate.mul_terms {
+          max_witness = max_witness.max(wi.as_usize()).max(wj.as_usize());
+        }
+        for (_, wi) in &gate.linear_combinations {
+          max_witness = max_witness.max(wi.as_usize());
+        }
+      }
+    }
 
-  //       // First, collect all unique witness indices used in this gate
-  //       let mut witnesses = std::collections::BTreeSet::new();
+    println!("\nInitializing CCS with {} variables", max_witness + 1);
 
-  //       // Add indices from multiplication terms
-  //       for (_, wi, wj) in &gate.mul_terms {
-  //         witnesses.insert(wi.as_usize());
-  //         witnesses.insert(wj.as_usize());
-  //       }
+    // Add variables
+    for _ in 0..=max_witness {
+      ccs.add_variable();
+    }
 
-  //       // Add indices from linear terms
-  //       for (_, wi) in &gate.linear_combinations {
-  //         witnesses.insert(wi.as_usize());
-  //       }
+    // Process each ACIR gate
+    for opcode in &self.circuit().opcodes {
+      if let Opcode::AssertZero(gate) = opcode {
+        let c = ccs.add_constraint();
 
-  //       dbg!(&witnesses);
+        println!("\nConstructing constraint {}:", c);
 
-  //       // Create a mapping from witness indices to matrix indices
-  //       let witness_to_matrix: std::collections::HashMap<usize, usize> = witnesses
-  //         .into_iter()
-  //         .enumerate()
-  //         .map(|(matrix_idx, witness_idx)| (witness_idx, matrix_idx))
-  //         .collect();
+        // First pass: Handle squared terms (w0^2, w1^2, w2^2)
+        println!("\nSquared terms:");
+        for (q_ij, wi, wj) in &gate.mul_terms {
+          if wi.as_usize() == wj.as_usize() {
+            let idx = wi.as_usize();
+            let coeff = -q_ij.into_repr(); // Negate ACIR coefficient
 
-  //       // Now use this mapping when writing to matrices
-  //       for (q_ij, wi, wj) in &gate.mul_terms {
-  //         let matrix_i = witness_to_matrix[&wi.as_usize()];
-  //         let matrix_j = witness_to_matrix[&wj.as_usize()];
+            // For term like 4w0^2, we can write sqrt(4) to both A and B
+            let sqrt_coeff = coeff.sqrt().unwrap_or(coeff);
+            println!("  {} * w{} * w{} (sqrt = {})", coeff, idx, idx, sqrt_coeff);
 
-  //         // Write to the mapped matrix indices
-  //         ccs.matrices[matrix_i].write_expand(constraint_idx, wi.as_usize(), Fr::ONE);
-  //         ccs.matrices[matrix_j].write_expand(constraint_idx, wj.as_usize(), Fr::ONE);
+            ccs.matrices[0].write(c, idx, sqrt_coeff);
+            ccs.matrices[1].write(c, idx, sqrt_coeff);
+          }
+        }
 
-  //         ccs.set_multiplication_coefficient(matrix_i, matrix_j, constraint_idx, q_ij.into_repr());
-  //       }
+        // Second pass: Handle cross terms (w0*w1, w1*w2, etc)
+        println!("\nCross terms:");
+        for (q_ij, wi, wj) in &gate.mul_terms {
+          let wi_idx = wi.as_usize();
+          let wj_idx = wj.as_usize();
+          if wi_idx != wj_idx {
+            let coeff = -q_ij.into_repr(); // Negate ACIR coefficient
+            println!("  {} * w{} * w{}", coeff, wi_idx, wj_idx);
 
-  //       // Similarly for linear terms
-  //       for (q_i, wi) in &gate.linear_combinations {
-  //         let matrix_i = witness_to_matrix[&wi.as_usize()];
-  //         ccs.matrices[matrix_i].write_expand(constraint_idx, wi.as_usize(), Fr::ONE);
-  //         ccs.set_linear(matrix_i, constraint_idx, q_i.into_repr());
-  //       }
+            // For cross terms, we can put the coefficient in B
+            ccs.matrices[0].write(c, wi_idx, Fr::ONE);
+            ccs.matrices[1].write(c, wj_idx, coeff);
+          }
+        }
 
-  //       ccs.set_constant(constraint_idx, gate.q_c.into_repr());
-  //     }
-  //   }
-  //   ccs
-  // }
+        ccs.selectors[0][c] = Fr::ONE; // qm
+
+        println!("\nLinear terms:");
+        for (q_i, wi) in &gate.linear_combinations {
+          let wi_idx = wi.as_usize();
+          let coeff = q_i.into_repr();
+          println!("  {} * w{}", coeff, wi_idx);
+          ccs.matrices[2].write(c, wi_idx, coeff);
+        }
+        ccs.selectors[3][c] = Fr::ONE; // qo
+
+        // Handle constant term
+        ccs.selectors[4][c] = gate.q_c.into_repr();
+
+        // Debug output
+        println!("\nMatrix values:");
+        println!("Matrix A: {:?}", (0..4).map(|i| ccs.matrices[0].get(c, i)).collect::<Vec<_>>());
+        println!("Matrix B: {:?}", (0..4).map(|i| ccs.matrices[1].get(c, i)).collect::<Vec<_>>());
+        println!("Matrix C: {:?}", (0..4).map(|i| ccs.matrices[2].get(c, i)).collect::<Vec<_>>());
+
+        // Print expected terms when multiplied
+        println!("\nExpected terms when multiplied:");
+        for i in 0..4 {
+          let a_val = ccs.matrices[0].get(c, i);
+          for j in 0..4 {
+            let b_val = ccs.matrices[1].get(c, j);
+            if a_val != Fr::ZERO && b_val != Fr::ZERO {
+              println!(
+                "  ({} * w{}) * ({} * w{}) = {} * w{} * w{}",
+                a_val,
+                i,
+                b_val,
+                j,
+                a_val * b_val,
+                i,
+                j
+              );
+            }
+          }
+        }
+      }
+    }
+    ccs
+  }
 
   pub fn solve(
     &self,
@@ -216,125 +267,75 @@ mod tests {
     NoirProgram::new(&bin)
   }
 
-  // / Tests conversion of a Noir program to our constraint system
-  // / This test uses the example circuit:
-  // / ```ignore
-  // / pub fn main(x0: pub Field, w: [Field; 2]) -> pub Field {
-  // /     1 * x0 * x0 + 2 * x0 * w[0] + 3 * x0 * w[1] +
-  // /     4 * w[0] * w[0] + 5 * w[0] * w[1] + 6 * w[1] * w[1] +
-  // /     7 * x0 + 8 * w[0] + 9 * w[1] + 10
-  // / }
-  // / ```
-  // #[test]
-  // #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
-  // fn test_generate_constraints() {
-  //   let program = program();
-  //   let ccs = program.generate_constraints();
+  /// Tests conversion of a Noir program to our constraint system
+  /// This test uses the example circuit:
+  /// ```ignore
+  /// pub fn main(x0: pub Field, w: [Field; 2]) -> pub Field {
+  ///     1 * x0 * x0 + 2 * x0 * w[0] + 3 * x0 * w[1] +
+  ///     4 * w[0] * w[0] + 5 * w[0] * w[1] + 6 * w[1] * w[1] +
+  ///     7 * x0 + 8 * w[0] + 9 * w[1] + 10
+  /// }
+  /// ```
+  #[test]
+  #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+  fn test_generate_constraints() {
+    let program = program();
+    let ccs = program.generate_constraints();
 
-  //   // Verify matrix dimensions and structure
-  //   assert_eq!(ccs.matrices.len(), 4, "Should have 4 selector matrices");
+    // Verify basic structure
+    assert_eq!(ccs.matrices.len(), 3, "Should have 3 matrices (A, B, C)");
+    assert_eq!(ccs.selectors.len(), 5, "Should have 5 selectors (qm, ql, qr, qo, qc)");
 
-  //   // Check matrix structure
-  //   for (i, matrix) in ccs.matrices.iter().enumerate() {
-  //     let (rows, cols) = matrix.dimensions();
-  //     assert!(rows > 0, "Matrix {} should have rows", i);
-  //     assert!(cols >= 4, "Matrix {} should have at least 4 columns", i);
+    // The polynomial has one constraint:
+    // 1*x0*x0 + 2*x0*w[0] + 3*x0*w[1] + 4*w[0]*w[0] + 5*w[0]*w[1] + 6*w[1]*w[1] +
+    // 7*x0 + 8*w[0] + 9*w[1] + 10 = 0
 
-  //     // Verify each matrix is properly selecting its variable
-  //     // A_0 should select x0, A_1 should select w[0], etc.
-  //     for _ in 0..rows {
-  //       assert_eq!(
-  //         matrix.dimensions().1,
-  //         4,
-  //         "Matrix should have exactly 4 columns (space for x0, w[0], w[1], output)"
-  //       );
+    // Check dimensions
+    let (rows, cols) = ccs.matrices[0].dimensions();
+    assert!(rows > 0, "Should have at least one constraint");
+    assert_eq!(cols, 4, "Should have space for x0, w[0], w[1], output");
 
-  //       // Each matrix should have exactly one 1 in its corresponding column
-  //       assert_eq!(
-  //         matrix * &vec![Fr::from(1), Fr::from(1), Fr::from(1), Fr::from(1)],
-  //         vec![Fr::from(1); rows],
-  //         "Matrix {} should select exactly one variable",
-  //         i
-  //       );
-  //     }
-  //   }
+    // Check multiplication terms (using matrices A and B with qm selector)
+    let qm = &ccs.selectors[0]; // multiplication selector
 
-  //   // Now let's verify every coefficient from our polynomial
-  //   let selectors = &ccs.selectors;
+    // Print matrices and selectors for debugging
+    println!("Matrix A:\n{}", ccs.matrices[0]);
+    println!("Matrix B:\n{}", ccs.matrices[1]);
+    println!("Matrix C:\n{}", ccs.matrices[2]);
+    println!("qm: {:?}", qm);
+    println!("ql: {:?}", ccs.selectors[1]);
+    println!("qr: {:?}", ccs.selectors[2]);
+    println!("qo: {:?}", ccs.selectors[3]);
+    println!("qc: {:?}", ccs.selectors[4]);
 
-  //   // First, verify the quadratic terms
-  //   // x0 * x0 term should have coefficient 1
-  //   assert_eq!(
-  //     selectors[0][0], // q_0,0 coefficient
-  //     -Fr::from(1),
-  //     "x0^2 term should have coefficient -1"
-  //   );
+    assert!(ccs.is_satisfied(&[], &[Fr::from(1), Fr::from(2), Fr::from(3), Fr::from(175)]));
 
-  //   // x0 * w[0] term should have coefficient 2
-  //   assert_eq!(
-  //     selectors[1][0], // q_0,1 coefficient
-  //     -Fr::from(2),
-  //     "x0*w[0] term should have coefficient -2"
-  //   );
+    // // Check linear terms (using matrix C with qo selector)
+    // let qo = &ccs.selectors[3]; // output selector
 
-  //   // x0 * w[1] term should have coefficient 3
-  //   assert_eq!(
-  //     selectors[2][0], // q_0,2 coefficient
-  //     -Fr::from(3),
-  //     "x0*w[1] term should have coefficient -3"
-  //   );
+    // // Check that x0 has coefficient 7 in linear terms
+    // let mut found_x0_term = false;
+    // for row in 0..rows {
+    //   if ccs.matrices[2].get(row, 0) == Some(&Fr::ONE) && qo[row] == -Fr::from(7) {
+    //     found_x0_term = true;
+    //     break;
+    //   }
+    // }
+    // assert!(found_x0_term, "Should find linear term 7*x0");
 
-  //   // w[0] * w[0] term should have coefficient 4
-  //   assert_eq!(
-  //     selectors[4][0], // q_1,1 coefficient
-  //     -Fr::from(4),
-  //     "w[0]^2 term should have coefficient -4"
-  //   );
+    // // Check constant term
+    // let qc = &ccs.selectors[4];
+    // assert!(qc.contains(&-Fr::from(10)), "Should have constant term -10");
 
-  //   // w[0] * w[1] term should have coefficient 5
-  //   assert_eq!(
-  //     selectors[5][0], // q_1,2 coefficient
-  //     -Fr::from(5),
-  //     "w[0]*w[1] term should have coefficient -5"
-  //   );
+    // // Test satisfaction with valid assignment
+    // let x = vec![];
+    // let w = vec![Fr::from(1), Fr::from(2), Fr::from(3)]; // Example values
+    // assert!(ccs.is_satisfied(&x, &w), "Valid assignment should satisfy constraints");
 
-  //   // w[1] * w[1] term should have coefficient 6
-  //   assert_eq!(
-  //     selectors[7][0], // q_2,2 coefficient
-  //     -Fr::from(6),
-  //     "w[1]^2 term should have coefficient -6"
-  //   );
-
-  //   // Verify linear terms
-  //   let num_quad_terms = (4 * 5) / 2; // Number of quadratic terms
-
-  //   // x0 term should have coefficient 7
-  //   assert_eq!(selectors[num_quad_terms][0], -Fr::from(7), "x0 term should have coefficient -7");
-
-  //   // w[0] term should have coefficient 8
-  //   assert_eq!(
-  //     selectors[num_quad_terms + 1][0],
-  //     -Fr::from(8),
-  //     "w[0] term should have coefficient -8"
-  //   );
-
-  //   // w[1] term should have coefficient 9
-  //   assert_eq!(
-  //     selectors[num_quad_terms + 2][0],
-  //     -Fr::from(9),
-  //     "w[1] term should have coefficient -9"
-  //   );
-
-  //   // Verify constant term
-  //   assert_eq!(selectors.last().unwrap()[0], -Fr::from(10), "Constant term should be -10");
-
-  //   // Verify the output variable's coefficient is 1
-  //   assert_eq!(
-  //     selectors[num_quad_terms + 3][0],
-  //     Fr::from(1),
-  //     "Output variable should have coefficient 1"
-  //   );
-  // }
+    // // Test with invalid assignment
+    // let w_invalid = vec![Fr::from(0), Fr::from(0), Fr::from(0)];
+    // assert!(!ccs.is_satisfied(&x, &w_invalid), "Invalid assignment should not satisfy constraints");
+  }
 
   // #[test]
   // #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]

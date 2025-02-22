@@ -1,2 +1,6 @@
 [target.wasm32-unknown-unknown]
 rustflags = ["--cfg=getrandom_backend=\"wasm_js\""]
+
+[target.aarch64-unknown-linux-gnu]
+ar     = "aarch64-linux-musl-ar"
+linker = "aarch64-linux-musl-gcc"

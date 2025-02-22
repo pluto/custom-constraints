@@ -17,9 +17,9 @@ pub struct SparseMatrix<F> {
   /// Column indices of non-zero elements
   col_indices: Vec<usize>,
   /// Values of non-zero elements
-  values:      Vec<F>,
+  values: Vec<F>,
   /// Number of columns in the matrix
-  num_cols:    usize,
+  num_cols: usize,
 }
 
 impl<F: Field> SparseMatrix<F> {
@@ -106,10 +106,19 @@ impl<F: Field> SparseMatrix<F> {
   ///
   /// # Returns
   /// A tuple (rows, cols) representing the matrix dimensions
-  pub fn dimensions(&self) -> (usize, usize) { (self.row_offsets.len() - 1, self.num_cols) }
+  pub fn dimensions(&self) -> (usize, usize) {
+    (self.row_offsets.len() - 1, self.num_cols)
+  }
 
   /// Adds a new empty row to the matrix
-  pub fn add_row(&mut self) { self.row_offsets.push(*self.row_offsets.last().unwrap_or(&0)); }
+  pub fn add_row(&mut self) {
+    self.row_offsets.push(*self.row_offsets.last().unwrap_or(&0));
+  }
+
+  /// Adds a new empty column to the matrix
+  pub fn add_column(&mut self) {
+    self.num_cols += 1;
+  }
 
   #[allow(unused)]
   /// Removes an entry from the [`SparseMatrix`]
@@ -130,6 +139,31 @@ impl<F: Field> SparseMatrix<F> {
       for i in row + 1..self.row_offsets.len() {
         self.row_offsets[i] -= 1;
       }
+    }
+  }
+
+  /// Gets the value at the specified position in the matrix.
+  ///
+  /// # Arguments
+  /// * `row` - Row index
+  /// * `col` - Column index
+  ///
+  /// # Returns
+  /// The value at the specified position, or F::ZERO if no value exists at that position
+  pub fn get(&self, row: usize, col: usize) -> F {
+    // Check bounds
+    if row >= self.row_offsets.len() - 1 || col >= self.num_cols {
+      return F::ZERO;
+    }
+
+    // Get the range of indices for the current row
+    let start = self.row_offsets[row];
+    let end = self.row_offsets[row + 1];
+
+    // Search for the column index in the current row
+    match self.col_indices[start..end].binary_search(&col) {
+      Ok(pos) => self.values[start + pos],
+      Err(_) => F::ZERO,
     }
   }
 }
@@ -354,11 +388,14 @@ mod tests {
     // [6 0 0]
     // [0 6 0]
     // [0 0 10]
-    assert_eq!(result.values, [
-      F17::from(6),  // 2*3 at (0,0)
-      F17::from(6),  // 3*2 at (1,1)
-      F17::from(10), // 5*2 at (2,2)
-    ]);
+    assert_eq!(
+      result.values,
+      [
+        F17::from(6),  // 2*3 at (0,0)
+        F17::from(6),  // 3*2 at (1,1)
+        F17::from(10), // 5*2 at (2,2)
+      ]
+    );
     assert_eq!(result.col_indices, [0, 1, 2]);
     assert_eq!(result.row_offsets, [0, 1, 2, 3]);
   }
@@ -438,5 +475,104 @@ mod tests {
   fn test_write_expand_zero() {
     let mut matrix = SparseMatrix::new_rows_cols(2, 2);
     matrix.write_expand(3, 3, F17::from(0));
+  }
+
+  #[test]
+  #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+  fn test_add_row() {
+    let mut matrix = SparseMatrix::new_rows_cols(2, 2);
+
+    // Add some initial values
+    matrix.write(0, 0, F17::from(1));
+    matrix.write(1, 1, F17::from(2));
+
+    // Add a new row
+    matrix.add_row();
+
+    // Check dimensions
+    assert_eq!(matrix.dimensions(), (3, 2));
+
+    // Verify existing values remain unchanged
+    let row_start = matrix.row_offsets[0];
+    let row_end = matrix.row_offsets[1];
+    assert_eq!(matrix.values[row_start], F17::from(1));
+
+    let row_start = matrix.row_offsets[1];
+    let row_end = matrix.row_offsets[2];
+    assert_eq!(matrix.values[row_start], F17::from(2));
+
+    // Verify new row is empty
+    assert_eq!(matrix.row_offsets[2], matrix.row_offsets[3]);
+  }
+
+  #[test]
+  #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+  fn test_add_column() {
+    let mut matrix = SparseMatrix::new_rows_cols(2, 2);
+
+    // Add some initial values
+    matrix.write(0, 0, F17::from(1));
+    matrix.write(1, 1, F17::from(2));
+
+    // Add a new column
+    matrix.add_column();
+
+    // Check dimensions
+    assert_eq!(matrix.dimensions(), (2, 3));
+
+    // Verify we can write to the new column
+    matrix.write(0, 2, F17::from(3));
+
+    // Verify all values are correct
+    let mut found_values = Vec::new();
+    for row in 0..2 {
+      let row_start = matrix.row_offsets[row];
+      let row_end = matrix.row_offsets[row + 1];
+      for i in row_start..row_end {
+        found_values.push((row, matrix.col_indices[i], matrix.values[i]));
+      }
+    }
+
+    assert_eq!(
+      found_values,
+      vec![(0, 0, F17::from(1)), (0, 2, F17::from(3)), (1, 1, F17::from(2)),]
+    );
+  }
+
+  #[test]
+  #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+  fn test_add_multiple_rows_and_columns() {
+    let mut matrix = SparseMatrix::new_rows_cols(1, 1);
+
+    // Add initial value
+    matrix.write(0, 0, F17::from(1));
+
+    // Add multiple rows and columns
+    matrix.add_row();
+    matrix.add_column();
+    matrix.add_row();
+    matrix.add_column();
+
+    // Check final dimensions
+    assert_eq!(matrix.dimensions(), (3, 3));
+
+    // Write values using new rows and columns
+    matrix.write(1, 1, F17::from(2));
+    matrix.write(2, 2, F17::from(3));
+
+    // Verify all values are correct
+    let mut found_values = Vec::new();
+    for row in 0..3 {
+      let row_start = matrix.row_offsets[row];
+      let row_end = matrix.row_offsets[row + 1];
+      for i in row_start..row_end {
+        found_values.push((row, matrix.col_indices[i], matrix.values[i]));
+      }
+    }
+
+    assert_eq!(
+      found_values,
+      vec![(0, 0, F17::from(1)), (1, 1, F17::from(2)), (2, 2, F17::from(3)),]
+    );
   }
 }

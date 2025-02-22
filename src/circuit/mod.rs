@@ -153,7 +153,7 @@ impl<F: Field> Circuit<Building, F> {
   }
 
   /// Creates a new auxiliary variable and increments the counter.
-  const fn new_aux(&mut self) -> Variable {
+  pub const fn new_aux(&mut self) -> Variable {
     let var = Variable::Aux(self.aux_count);
     self.aux_count += 1;
     var

@@ -16,6 +16,7 @@ use super::*;
 
 pub mod generic;
 pub mod plonkish;
+pub mod r1cs;
 
 /// A trait for configuring different types of Customizable Constraint Systems (CCS).
 ///
@@ -40,10 +41,12 @@ pub struct CCS<C: CCSType<F>, F: Field> {
   /// Sets of matrix indices for Hadamard products
   pub multisets: Vec<Vec<usize>>,
   /// Constraint matrices
-  pub matrices:  Vec<SparseMatrix<F>>,
+  pub matrices: Vec<SparseMatrix<F>>,
 }
 
 impl<C: CCSType<F> + Default, F: Field> CCS<C, F> {
   /// Creates a new empty CCS.
-  pub fn new() -> Self { Self::default() }
+  pub fn new() -> Self {
+    Self::default()
+  }
 }

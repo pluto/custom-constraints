@@ -93,8 +93,24 @@ install-targets:
         wasm32-unknown-unknown
 
 # Setup complete development environment
-setup: install-cargo-tools install-rust-nightly install-targets install-node
+setup: install-cargo-tools install-rust-nightly install-targets install-node install-cross-compile-deps
     @printf "{{success}}{{bold}}Development environment setup complete!{{reset}}\n"
+
+# Install dependencies for cross compilation
+install-cross-compile-deps:
+    @just header "Installing system dependencies"
+    # macOS
+    if command -v brew > /dev/null; then \
+        brew install filosottile/musl-cross/musl-cross mingw-w64; \
+    fi
+    # Linux
+    if command -v apt-get > /dev/null; then \
+        sudo apt-get update && sudo apt-get install -y musl-tools mingw-w64; \
+    elif command -v dnf > /dev/null; then \
+        sudo dnf install -y musl-gcc mingw64-gcc; \
+    elif command -v pacman > /dev/null; then \
+        sudo pacman -Sy musl mingw-w64-gcc; \
+    fi
 
 # Build with local OS target
 build:

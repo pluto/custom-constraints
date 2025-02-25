@@ -119,8 +119,6 @@ impl NoirProgram {
           witnesses.insert(wi.as_usize());
         }
 
-        dbg!(&witnesses);
-
         // Create a mapping from witness indices to matrix indices
         let witness_to_matrix: std::collections::HashMap<usize, usize> = witnesses
           .into_iter()
@@ -190,6 +188,39 @@ impl NoirProgram {
     let witness = self.solve(public_inputs, private_inputs);
     let witness = witness_map_as_vec(witness);
     ccs.is_satisfied(&[], &witness)
+  }
+
+  #[cfg(test)]
+  pub fn scan_gate_width(&self) -> Vec<(Opcode<GenericFieldElement<Fr>>, usize)> {
+    let width = match self.circuit().expression_width {
+      acir::circuit::ExpressionWidth::Unbounded => panic!("Ignoring for this dummy wire count"),
+      acir::circuit::ExpressionWidth::Bounded { width } => width,
+    };
+
+    let mut fail_cases = Vec::new();
+
+    for opcode in &self.circuit().opcodes {
+      if let Opcode::AssertZero(gate) = opcode {
+        let mut witnesses = std::collections::BTreeSet::new();
+
+        // Add indices from multiplication terms
+        for (_, wi, wj) in &gate.mul_terms {
+          witnesses.insert(wi.as_usize());
+          witnesses.insert(wj.as_usize());
+        }
+
+        // Add indices from linear terms
+        for (_, wi) in &gate.linear_combinations {
+          witnesses.insert(wi.as_usize());
+        }
+
+        if witnesses.len() > width {
+          // println!("Wire count for gate {:?} is {}", opcode, witnesses.len());
+          fail_cases.push((opcode.clone(), witnesses.len()));
+        }
+      }
+    }
+    fail_cases
   }
 }
 
@@ -372,5 +403,14 @@ mod tests {
   fn test_satisfied_hash() {
     let program = program_hash();
     program.is_satisfied(vec![Fr::from(1); 32], vec![Fr::from(2); 16]);
+  }
+
+  #[test]
+  #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+  fn test_max_wire_count_error() {
+    let program = program_hash();
+    let fail_cases = program.scan_gate_width();
+    let max_wire_count = fail_cases.iter().max_by(|a, b| a.1.cmp(&b.1)).unwrap();
+    dbg!(max_wire_count);
   }
 }
